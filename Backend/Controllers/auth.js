@@ -34,19 +34,9 @@ const generateToken = (userId) => {
   }
 };
 
-// controllers/authController.js (improved handleSignUp)
 const handleSignUp = async (req, res) => {
     try {
-      // Debugging: show exactly what arrived
-      console.log("REQ.BODY raw:", req.body);
-      console.log("req.body type:", typeof req.body);
-      console.log("req.body keys:", Object.keys(req.body));
-  
-      // Destructure (now includes phone)
       const { name, email, password, phone } = req.body;
-      console.log("Destructured ->", { name, email, password, phone });
-  
-      // Include phone in validation so it is checked if provided
       const validate = userSchemaValidate.safeParse({ name, email, password, phone });
   
       if (!validate.success) {
@@ -108,7 +98,6 @@ const handleSignIn = async (req, res) => {
       });
     }
 
-    // password is select:false in schema so include it explicitly
     const foundUser = await User.findOne({ email: email }).select("+password");
     if (!foundUser) {
       return res.status(404).json({
@@ -127,12 +116,11 @@ const handleSignIn = async (req, res) => {
 
     const token = generateToken(foundUser._id);
 
-    // set cookie (optional) and also return token in response
     res.cookie("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "Strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000, 
     });
 
     const userResponse = {
@@ -174,29 +162,9 @@ const handleSignOut = (req, res) => {
   }
 };
 
-// simple auth middleware to protect routes
-const verifyTokenMiddleware = (req, res, next) => {
-  try {
-    // try cookie first, then Authorization header
-    const token = req.cookies?.token || (req.headers.authorization && req.headers.authorization.split(" ")[1]);
-
-    if (!token) {
-      return res.status(401).json({ success: false, message: "No token provided" });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_KEY);
-    req.userId = decoded._id || decoded.sub || decoded.userId;
-    next();
-  } catch (error) {
-    console.error("Token verification error", error);
-    return res.status(401).json({ success: false, message: "Invalid or expired token" });
-  }
-};
-
 module.exports = {
   handleSignUp,
   handleSignIn,
   handleSignOut,
   generateToken,
-  verifyTokenMiddleware,
 };
