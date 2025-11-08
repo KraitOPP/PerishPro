@@ -6,59 +6,91 @@ import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 import Alert from '../components/common/Alert';
 import useAuthStore from '../store/authStore';
+import { login, signup } from '../services/authService';
 
 const Auth: React.FC = () => {
   const navigate = useNavigate();
   const authLogin = useAuthStore((state) => state.login);
-  
+
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    password: ''
+    password: '',
+    phone: ''
   });
-  
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
   };
-  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const mockResponse = {
-        token: 'mock-jwt-token-' + Date.now(),
-        user: {
-          id: 1,
-          name: formData.name || formData.email.split('@')[0],
-          email: formData.email
+      // small UX delay (optional)
+      await new Promise((r) => setTimeout(r, 200));
+
+      if (isLogin) {
+        // Sign in flow - pass an object
+        const data = await login({ email: formData.email, password: formData.password });
+
+        if (!data || !data.success) {
+          throw new Error(data?.message ?? 'Login failed');
         }
-      };
-      
-      authLogin(mockResponse.token, mockResponse.user);
-      navigate('/dashboard');
-    } catch (err) {
-      setError('Authentication failed. Please try again.');
+
+        // expected: { success: true, token, user }
+        authLogin(data.token, data.user);
+        navigate('/dashboard');
+      } else {
+        // Sign up flow (pass object)
+        const data = await signup({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          phone: formData.phone
+        });
+
+        if (!data || !data.success) {
+          throw new Error(data?.message ?? 'Signup failed');
+        }
+
+        // If backend returns token/user after signup, auto-login:
+        if (data.token && data.user) {
+          authLogin(data.token, data.user);
+          navigate('/dashboard');
+        } else {
+          // otherwise switch to login screen and show success msg
+          setIsLogin(true);
+          setError('Account created. Please sign in.');
+        }
+      }
+    } catch (err: any) {
+      const serverMessage =
+        (typeof err === 'string' && err) ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Authentication failed. Please try again.';
+      setError(serverMessage);
     } finally {
       setLoading(false);
     }
   };
-  
+
   const features = [
     { icon: TrendingUp, title: 'AI Price Optimization', desc: 'ML-powered pricing recommendations' },
     { icon: Package, title: 'Smart Inventory', desc: 'Real-time stock monitoring' },
     { icon: DollarSign, title: 'Profit Maximization', desc: 'Reduce waste, increase revenue' }
   ];
-  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500 flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Animated background elements */}
@@ -74,7 +106,7 @@ const Auth: React.FC = () => {
           transition={{ duration: 25, repeat: Infinity }}
         />
       </div>
-      
+
       <div className="max-w-6xl w-full grid md:grid-cols-2 gap-8 relative z-10">
         {/* Left side - Branding */}
         <motion.div
@@ -85,7 +117,7 @@ const Auth: React.FC = () => {
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            transition={{ type: "spring", delay: 0.2 }}
+            transition={{ type: 'spring', delay: 0.2 }}
             className="flex items-center gap-3 mb-6"
           >
             <div className="p-3 bg-white/20 backdrop-blur-lg rounded-2xl">
@@ -96,11 +128,11 @@ const Auth: React.FC = () => {
               <p className="text-sm text-white/90">Smart Retail Solutions</p>
             </div>
           </motion.div>
-          
+
           <p className="text-xl text-white/90 mb-8">
             Transform your perishable inventory management with AI-powered pricing that maximizes profit and minimizes waste.
           </p>
-          
+
           <div className="space-y-4">
             {features.map((feature, index) => (
               <motion.div
@@ -121,7 +153,7 @@ const Auth: React.FC = () => {
             ))}
           </div>
         </motion.div>
-        
+
         {/* Right side - Auth form */}
         <motion.div
           initial={{ opacity: 0, x: 50 }}
@@ -129,58 +161,27 @@ const Auth: React.FC = () => {
           className="bg-white rounded-2xl shadow-2xl p-8 backdrop-blur-xl"
         >
           <div className="text-center mb-8">
-            <motion.h2
-              initial={{ y: -20 }}
-              animate={{ y: 0 }}
-              className="text-3xl font-bold text-gray-800 mb-2"
-            >
+            <motion.h2 initial={{ y: -20 }} animate={{ y: 0 }} className="text-3xl font-bold text-gray-800 mb-2">
               {isLogin ? 'Welcome Back' : 'Get Started'}
             </motion.h2>
-            <p className="text-gray-600">
-              {isLogin ? 'Sign in to your account' : 'Create your account today'}
-            </p>
+            <p className="text-gray-600">{isLogin ? 'Sign in to your account' : 'Create your account today'}</p>
           </div>
-          
-          {error && <Alert message={error} type="error" onClose={() => setError('')} />}
-          
+
+          {error && <Alert message={error} type={error.includes('created') ? 'success' : 'error'} onClose={() => setError('')} />}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-              >
-                <Input
-                  label="Full Name"
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="John Doe"
-                  required
-                />
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="space-y-2">
+                <Input label="Full Name" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="John Doe" required />
+
+                <Input label="Phone (optional)" type="tel" name="phone" value={formData.phone} onChange={handleChange} placeholder="+91 98765 43210" />
               </motion.div>
             )}
-            
-            <Input
-              label="Email"
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="john@example.com"
-              required
-            />
-            
-            <Input
-              label="Password"
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="••••••••"
-              required
-            />
-            
+
+            <Input label="Email" type="email" name="email" value={formData.email} onChange={handleChange} placeholder="john@example.com" required />
+
+            <Input label="Password" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="••••••••" required />
+
             {isLogin && (
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -192,29 +193,29 @@ const Auth: React.FC = () => {
                 </a>
               </div>
             )}
-            
+
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Button 
-                type="submit" 
-                variant="primary" 
-                className="w-full mt-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 py-3"
-                disabled={loading}
-              >
+              <Button type="submit" variant="primary" className="w-full mt-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 py-3" disabled={loading}>
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                     Processing...
                   </span>
+                ) : isLogin ? (
+                  'Sign In'
                 ) : (
-                  isLogin ? 'Sign In' : 'Create Account'
+                  'Create Account'
                 )}
               </Button>
             </motion.div>
           </form>
-          
+
           <div className="mt-6 text-center">
             <button
-              onClick={() => setIsLogin(!isLogin)}
+              onClick={() => {
+                setError('');
+                setIsLogin(!isLogin);
+              }}
               className="text-gray-600 hover:text-gray-800"
             >
               {isLogin ? (
@@ -224,7 +225,7 @@ const Auth: React.FC = () => {
               )}
             </button>
           </div>
-          
+
           <div className="mt-8 pt-6 border-t border-gray-200">
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>

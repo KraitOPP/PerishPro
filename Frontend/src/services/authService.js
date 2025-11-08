@@ -1,19 +1,55 @@
+// src/services/authService.js
 import api from './api';
 
-export const login = async (email, password) => {
+/**
+ * Accepts either:
+ *  - login({ email, password })
+ *  - login(email, password)
+ * Returns: the response data (axios response.data)
+ */
+export const login = async (payloadOrEmail, password) => {
   try {
-    const response = await api.post('/auth/login', { email, password });
+    const payload =
+      typeof payloadOrEmail === 'object'
+        ? payloadOrEmail
+        : { email: payloadOrEmail, password };
+
+    const response = await api.post('/auth/sign-in', payload);
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Login failed';
+    // throw a consistent error (string or object as you prefer)
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Login failed';
+    throw message;
   }
 };
 
-export const register = async (name, email, password) => {
+/**
+ * Accepts either:
+ *  - signup({ name, email, password, phone })
+ *  - signup(name, email, password, phone)
+ * Returns: the response data (axios response.data)
+ */
+export const signup = async (payloadOrName, email, password, phone) => {
   try {
-    const response = await api.post('/auth/register', { name, email, password });
+    const payload =
+      typeof payloadOrName === 'object'
+        ? payloadOrName
+        : { name: payloadOrName, email, password, phone };
+
+    const response = await api.post('/auth/sign-up', payload);
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Registration failed';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Registration failed';
+    throw message;
   }
 };
+
+export default { login, signup };
