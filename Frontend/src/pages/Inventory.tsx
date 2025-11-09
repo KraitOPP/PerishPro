@@ -413,13 +413,12 @@ const InventoryPage: React.FC = () => {
     // critical = number of items expiring soon (red expiry)
     const critical = products.filter(p => isExpiringSoon(p.expiryDate)).length;
 
-    // needsOptimization = items where ML optimal different from current OR expiring soon
+    // needsOptimization = items where the ML optimal price is missing (null/undefined)
     const needsOptimization = products.filter(p => {
       const mlOpt = (typeof p.optimalPrice === 'number' ? p.optimalPrice :
                      typeof p.mlPrice === 'number' ? p.mlPrice : null);
-      const differs = (typeof mlOpt === 'number') && Math.abs((p.currentPrice ?? 0) - mlOpt) > 0.001;
-      const expiring = isExpiringSoon(p.expiryDate);
-      return differs || expiring;
+      // only count when ML optimal is absent (displayed as '—' in UI)
+      return mlOpt === null;
     }).length;
 
     const totalValue = products.reduce((sum, p) => sum + ((p.currentPrice ?? 0) * (p.stock ?? 0)), 0);
