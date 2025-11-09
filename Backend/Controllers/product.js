@@ -319,44 +319,89 @@ const updateProduct = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to update product' });
   }
 };
-// Delete Product (soft delete by default; hard delete if ?force=true)
-const handleDeleteProduct = async () => {
-  if (!selectedProduct) return;
-  const id = selectedProduct._id ?? selectedProduct.id;
-  if (!id) return;
+// // Delete Product (soft delete by default; hard delete if ?force=true)
+// const deleteProduct = async () => {
+//   if (!selectedProduct) return;
+//   const id = selectedProduct._id ?? selectedProduct.id;
+//   if (!id) return;
 
-  setActionLoading(true);
-  setErrorMessage('');
+//   setActionLoading(true);
+//   setErrorMessage('');
 
+//   try {
+//     console.debug('Deleting id:', id);
+
+//     // Request hard delete (force=true)
+//     const resp = await productService.deleteProduct(String(id), { force: true });
+
+//     console.debug('DELETE response:', resp);
+
+//     if (resp && resp.success) {
+//       // remove from UI only after server confirms deletion
+//       setProducts(prev => prev.filter(p => (p._id ?? p.id) !== id));
+//       setSuccessMessage(`${selectedProduct.name} permanently deleted`);
+//       setTimeout(() => setSuccessMessage(''), 3000);
+//       setIsDeleteModalOpen(false);
+//     } else {
+//       // backend returned something unexpected
+//       const msg = resp?.message || 'Delete failed';
+//       setErrorMessage(msg);
+//       setTimeout(() => setErrorMessage(''), 5000);
+//     }
+//   } catch (err) {
+//     const errorMsg = typeof err === 'string'
+//       ? err
+//       : (err?.response?.data?.message ?? err?.message ?? 'Failed to delete product');
+//     setErrorMessage(errorMsg);
+//     setTimeout(() => setErrorMessage(''), 5000);
+//     console.error('deleteProduct error (frontend):', err);
+//   } finally {
+//     setActionLoading(false);
+//   }
+// };
+
+const deleteProduct = async (req, res) => {
   try {
-    console.debug('Deleting id:', id);
+    const oid = req.params.id;
+    const force = req.query.force === 'true';
 
-    // Request hard delete (force=true)
-    const resp = await productService.deleteProduct(String(id), { force: true });
-
-    console.debug('DELETE response:', resp);
-
-    if (resp && resp.success) {
-      // remove from UI only after server confirms deletion
-      setProducts(prev => prev.filter(p => (p._id ?? p.id) !== id));
-      setSuccessMessage(`${selectedProduct.name} permanently deleted`);
-      setTimeout(() => setSuccessMessage(''), 3000);
-      setIsDeleteModalOpen(false);
-    } else {
-      // backend returned something unexpected
-      const msg = resp?.message || 'Delete failed';
-      setErrorMessage(msg);
-      setTimeout(() => setErrorMessage(''), 5000);
+    if (!oid) {
+      return res.status(400).json({ success: false, message: 'Invalid product id' });
     }
-  } catch (err: any) {
-    const errorMsg = typeof err === 'string'
-      ? err
-      : (err?.response?.data?.message ?? err?.message ?? 'Failed to delete product');
-    setErrorMessage(errorMsg);
-    setTimeout(() => setErrorMessage(''), 5000);
-    console.error('deleteProduct error (frontend):', err);
-  } finally {
-    setActionLoading(false);
+
+    // Validate ObjectId early (avoids cast errors)
+    if (!mongoose.Types.ObjectId.isValid(oid)) {
+      return res.status(400).json({ success: false, message: 'Invalid product id format' });
+    }
+
+    if (force) {
+      // Hard delete
+      const removed = await Product.findByIdAndDelete(oid);
+      if (!removed) {
+        return res.status(404).json({ success: false, message: 'Product not found' });
+      }
+      return res.status(200).json({ success: true, message: 'Product permanently deleted' });
+    }
+
+    // Soft delete: mark discontinued and set discontinuedAt
+    const updated = await Product.findByIdAndUpdate(
+      oid,
+      { status: 'discontinued', discontinuedAt: new Date() },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Product discontinued (soft deleted)',
+      product: updated
+    });
+  } catch (err) {
+    console.error('deleteProduct error', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete product' });
   }
 };
 

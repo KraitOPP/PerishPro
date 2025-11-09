@@ -96,7 +96,7 @@ const ProductSchema = new Schema(
     ]
   },
   // ...
-});
+// });
     perishable: {
       manufactureDate: {
         type: Date,
