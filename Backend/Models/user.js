@@ -21,11 +21,23 @@ const UserSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Password is required'],
       minlength: [8, 'Password must be at least 8 characters'],
-      select: false 
+      select: false
     },
     phone: {
       type: String,
       match: [/^[+]?[(]?[0-9]{1,4}[)]?[-\s.]?[(]?[0-9]{1,4}[)]?[-\s.]?[0-9]{1,9}$/, 'Please provide a valid phone number'],
+      default: ""
+    },
+    storeName: {
+      type: String,
+      trim: true,
+      maxlength: [150, 'Store name cannot exceed 150 characters'],
+      default: ""
+    },
+    storeAddress: {
+      type: String,
+      trim: true,
+      maxlength: [300, 'Store address cannot exceed 300 characters'],
       default: ""
     }
   },

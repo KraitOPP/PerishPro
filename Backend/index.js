@@ -6,6 +6,8 @@ const { connectMongoDB } = require('./connection');
 
 const app = express();
 const authRouter = require("./Routes/auth");
+const productRouter = require("./Routes/product");
+const userRouter = require("./Routes/user");
 
 
 app.use(cors({
@@ -29,7 +31,9 @@ app.use(express.json());
 app.use(express.urlencoded({extended:false}));
 app.use(cookieParser());
 
-app.use("/api/auth/",authRouter);
+app.use("/api/auth/", authRouter);
+app.use("/api/user/", userRouter);
+app.use("/api/products/", productRouter);
 
 app.get('/',(req,res)=>{
     return res.send("Server is  Running");

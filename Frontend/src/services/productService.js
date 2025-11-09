@@ -1,46 +1,133 @@
+// src/services/productService.js
 import api from './api';
 
-export const getProducts = async () => {
+/**
+ * listProducts(), getProduct(), updateProduct(), deleteProduct(), updateStock()
+ * unchanged — only addProduct supports file upload now.
+ */
+
+export const listProducts = async (options = {}) => {
   try {
-    const response = await api.get('/products');
+    const params = {
+      ...(options.page ? { page: options.page } : {}),
+      ...(options.limit ? { limit: options.limit } : {}),
+      ...(options.search ? { search: options.search } : {}),
+      ...(options.category ? { category: options.category } : {}),
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.storeId ? { storeId: options.storeId } : {}),
+      ...(options.sortBy ? { sortBy: options.sortBy } : {}),
+      ...(options.sortOrder ? { sortOrder: options.sortOrder } : {}),
+    };
+
+    const response = await api.get('/products', { params });
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Failed to fetch products';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to list products';
+    throw message;
   }
 };
 
-export const addProduct = async (productData) => {
+export const getProduct = async (id) => {
   try {
-    const response = await api.post('/products', productData);
+    const response = await api.get(`/products/${id}`);
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Failed to add product';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to fetch product';
+    throw message;
   }
 };
 
-export const updateProductPrice = async (id, newPrice) => {
+/**
+ * addProduct(payload, options?)
+ * options: { useFormData: boolean, imageFile: File (browser File) }
+ * If useFormData is true the payload will be sent as multipart/form-data:
+ * - field 'data' -> JSON.stringify(payload)
+ * - field 'image' -> File
+ */
+export const addProduct = async (payload, options = {}) => {
   try {
-    const response = await api.patch(`/products/${id}`, { price: newPrice });
-    return response.data;
+    if (options.useFormData && options.imageFile) {
+      const form = new FormData();
+      form.append('data', JSON.stringify(payload));
+      form.append('image', options.imageFile);
+
+      const response = await api.post('/products', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } else {
+      // send as JSON; payload.image can be a data-URL or a remote URL
+      const response = await api.post('/products', payload);
+      return response.data;
+    }
   } catch (error) {
-    throw error.response?.data?.message || 'Failed to update price';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to create product';
+    throw message;
   }
 };
 
-export const getDashboardStats = async () => {
+export const updateProduct = async (id, payload) => {
   try {
-    const response = await api.get('/analytics/summary');
+    const response = await api.patch(`/products/${id}`, payload);
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Failed to fetch dashboard stats';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to update product';
+    throw message;
   }
 };
 
-export const getAnalyticsData = async () => {
+export const deleteProduct = async (id, options = {}) => {
   try {
-    const response = await api.get('/analytics/charts');
+    const params = {};
+    if (options.force) params.force = true;
+    const response = await api.delete(`/products/${id}`, { params });
     return response.data;
   } catch (error) {
-    throw error.response?.data?.message || 'Failed to fetch analytics data';
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to delete product';
+    throw message;
   }
+};
+
+export const updateStock = async (id, opOrPayload, amount) => {
+  try {
+    const payload = typeof opOrPayload === 'object' ? opOrPayload : { op: opOrPayload, amount };
+    const response = await api.patch(`/products/${id}/stock`, payload);
+    return response.data;
+  } catch (error) {
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data ||
+      error?.message ||
+      'Failed to update stock';
+    throw message;
+  }
+};
+
+export default {
+  listProducts,
+  getProduct,
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  updateStock,
 };

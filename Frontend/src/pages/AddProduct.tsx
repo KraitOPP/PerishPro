@@ -1,9 +1,21 @@
+// src/pages/AddProduct.tsx
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Package, DollarSign, Calendar, Hash, Tag, Image as ImageIcon, Info, CheckCircle, AlertCircle, Upload, X } from 'lucide-react';
-import Input from '../components/common/Input';
+import {
+  Package,
+  DollarSign,
+  Calendar,
+  Hash,
+  Tag,
+  Image as ImageIcon,
+  Info,
+  CheckCircle,
+  Upload,
+  X
+} from 'lucide-react';
 import Button from '../components/common/Button';
 import Alert from '../components/common/Alert';
+import { addProduct } from '../services/productService';
 
 const AddProduct: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -14,24 +26,22 @@ const AddProduct: React.FC = () => {
     mfgDate: '',
     expiryDate: ''
   });
-  
+
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  
+
   const categories = ['Produce', 'Dairy', 'Meat', 'Bakery', 'Frozen', 'Beverages'];
-  
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
-  
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const file = e.target.files?.[0] ?? null;
     if (file) {
       setImageFile(file);
       const reader = new FileReader();
@@ -41,22 +51,129 @@ const AddProduct: React.FC = () => {
       reader.readAsDataURL(file);
     }
   };
-  
+
   const removeImage = () => {
     setImagePreview(null);
     setImageFile(null);
   };
-  
+
+  const calculateShelfLife = () => {
+    if (formData.mfgDate && formData.expiryDate) {
+      const mfg = new Date(formData.mfgDate);
+      const exp = new Date(formData.expiryDate);
+      const days = Math.floor((exp.getTime() - mfg.getTime()) / (1000 * 60 * 60 * 24));
+      return days > 0 ? days : 0;
+    }
+    return null;
+  };
+
+  const shelfLife = calculateShelfLife();
+
+  const validateForm = () => {
+    if (!formData.name.trim()) return 'Product name is required';
+    if (!formData.category) return 'Category is required';
+    if (!formData.mrp || Number(formData.mrp) <= 0) return 'Valid MRP is required';
+    if (!formData.stock || Number(formData.stock) < 0) return 'Valid stock quantity is required';
+    if (!formData.mfgDate) return 'Manufacturing date is required';
+    if (!formData.expiryDate) return 'Expiry date is required';
+    // ensure expiry > mfg
+    if (new Date(formData.expiryDate) <= new Date(formData.mfgDate)) return 'Expiry date must be after manufacturing date';
+    return null;
+  };
+
+  const extractErrorMessage = (err: any) => {
+    // Axios style error with response.data
+    if (err?.response?.data) {
+      const data = err.response.data;
+      // Prefer explicit message
+      if (data.message) return data.message;
+      // If server sent zod issues as array-like string/object
+      if (data.error || data.errors) {
+        if (typeof data.error === 'string') return data.error;
+        if (Array.isArray(data.errors)) return data.errors.join(', ');
+        return JSON.stringify(data.error || data.errors);
+      }
+    }
+
+    // If the backend returned a Zod error serialized in message
+    if (err?.message && typeof err.message === 'string') {
+      return err.message;
+    }
+
+    // If thrown string
+    if (typeof err === 'string') return err;
+
+    // Fallback
+    return 'Failed to add product';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setSuccessMessage('');
     setErrorMessage('');
-    
+
+    const validationError = validateForm();
+    if (validationError) {
+      setErrorMessage(validationError);
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setSuccessMessage('Product added successfully!');
+      // parse numeric fields
+      console.log(e);
+      const mrpNum = parseFloat(formData.mrp);
+      const stockNum = Number(formData.stock);
+
+      // Build payload that matches Zod schema exactly:
+      const payload: any = {
+        // optional storeId / sku left undefined unless you have them
+        name: formData.name.trim(),
+        category: formData.category,
+        description: '',
+
+        // pricing object (required fields)
+        pricing: {
+          costPrice: Number((mrpNum * 0.4).toFixed(2)), // default assumption
+          mrp: mrpNum,
+          currentPrice: mrpNum
+          // profitMargin optional - model pre-save will compute if needed
+        },
+
+        // stock object (required fields)
+        stock: {
+          quantity: stockNum,
+          unit: 'units',
+          reorderLevel: 0
+        },
+
+        // perishable object (required fields) — send ISO strings or Date objects
+        perishable: {
+          manufactureDate: new Date(formData.mfgDate).toISOString(),
+          expiryDate: new Date(formData.expiryDate).toISOString()
+        },
+
+        // optional objects (send empty objects to avoid "missing" errors, but zod marks them optional)
+        aiMetrics: {},
+        sales: {}
+      };
+
+      // If you want to set status explicitly:
+      // payload.status = 'active';
+
+      // If user uploaded an image file -> use multipart/form-data flow
+      let res;
+      if (imageFile) {
+        // productService will wrap payload as JSON under 'data' and append the file as 'image'
+        res = await addProduct(payload, { useFormData: true, imageFile });
+      } else {
+        // no file: send JSON
+        res = await addProduct(payload);
+      }
+
+      // success
+      setSuccessMessage(res?.message ?? 'Product added successfully!');
       setFormData({
         name: '',
         category: '',
@@ -67,33 +184,21 @@ const AddProduct: React.FC = () => {
       });
       setImagePreview(null);
       setImageFile(null);
-    } catch (err) {
-      setErrorMessage('Failed to add product. Please try again.');
+
+    } catch (err: any) {
+      console.error('Add product failed ->', err);
+      const msg = extractErrorMessage(err);
+      setErrorMessage(msg);
     } finally {
       setLoading(false);
     }
   };
-  
-  const calculateShelfLife = () => {
-    if (formData.mfgDate && formData.expiryDate) {
-      const mfg = new Date(formData.mfgDate);
-      const exp = new Date(formData.expiryDate);
-      const days = Math.floor((exp.getTime() - mfg.getTime()) / (1000 * 60 * 60 * 24));
-      return days > 0 ? days : 0;
-    }
-    return null;
-  };
-  
-  const shelfLife = calculateShelfLife();
-  
+
+
   return (
     <div className="max-w-6xl">
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
-      >
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl">
             <Package className="text-white" size={24} />
@@ -106,32 +211,19 @@ const AddProduct: React.FC = () => {
       </motion.div>
 
       {successMessage && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="mb-6"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-6">
           <Alert message={successMessage} type="success" onClose={() => setSuccessMessage('')} />
         </motion.div>
       )}
       {errorMessage && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="mb-6"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-6">
           <Alert message={errorMessage} type="error" onClose={() => setErrorMessage('')} />
         </motion.div>
       )}
-      
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Form */}
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.1 }}
-          className="lg:col-span-2"
-        >
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="lg:col-span-2">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Basic Information */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -139,7 +231,7 @@ const AddProduct: React.FC = () => {
                 <Info className="text-blue-600" size={20} />
                 <h2 className="text-gray-800">Basic Information</h2>
               </div>
-              
+
               <div className="space-y-4">
                 {/* Image Upload */}
                 <div>
@@ -151,62 +243,33 @@ const AddProduct: React.FC = () => {
                         <p className="text-sm text-gray-600">Click to upload product image</p>
                         <p className="text-xs text-gray-500">PNG, JPG up to 5MB</p>
                       </div>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept="image/*"
-                        onChange={handleImageChange}
-                      />
+                      <input type="file" className="hidden" accept="image/*" onChange={handleImageChange} />
                     </label>
                   ) : (
                     <div className="relative">
-                      <img
-                        src={imagePreview}
-                        alt="Product preview"
-                        className="w-full h-32 object-cover rounded-lg"
-                      />
-                      <button
-                        type="button"
-                        onClick={removeImage}
-                        className="absolute top-2 right-2 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"
-                      >
+                      <img src={imagePreview} alt="Product preview" className="w-full h-32 object-cover rounded-lg" />
+                      <button type="button" onClick={removeImage} className="absolute top-2 right-2 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors">
                         <X size={16} />
                       </button>
                     </div>
                   )}
                 </div>
-                
+
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Product Name *</label>
                   <div className="relative">
                     <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="text"
-                      name="name"
-                      value={formData.name}
-                      onChange={handleChange}
-                      placeholder="e.g., Fresh Organic Milk"
-                      required
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                    />
+                    <input type="text" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., Fresh Organic Milk" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                   </div>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Category *</label>
                   <div className="relative">
                     <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={18} />
-                    <select
-                      name="category"
-                      value={formData.category}
-                      onChange={handleChange}
-                      required
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none bg-white"
-                    >
+                    <select name="category" value={formData.category} onChange={handleChange} required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none bg-white">
                       <option value="">Select a category</option>
-                      {categories.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
+                      {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                   </div>
                 </div>
@@ -219,38 +282,21 @@ const AddProduct: React.FC = () => {
                 <DollarSign className="text-green-600" size={20} />
                 <h2 className="text-gray-800">Pricing & Stock</h2>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Price (MRP) *</label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="number"
-                      step="0.01"
-                      name="mrp"
-                      value={formData.mrp}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      required
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                    />
+                    <input type="number" step="0.01" name="mrp" value={formData.mrp} onChange={handleChange} placeholder="0.00" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                   </div>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Stock Quantity *</label>
                   <div className="relative">
                     <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="number"
-                      name="stock"
-                      value={formData.stock}
-                      onChange={handleChange}
-                      placeholder="0"
-                      required
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                    />
+                    <input type="number" name="stock" value={formData.stock} onChange={handleChange} placeholder="0" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                   </div>
                 </div>
               </div>
@@ -262,44 +308,24 @@ const AddProduct: React.FC = () => {
                 <Calendar className="text-orange-600" size={20} />
                 <h2 className="text-gray-800">Dates & Expiry</h2>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Manufacturing Date *</label>
-                  <input
-                    type="date"
-                    name="mfgDate"
-                    value={formData.mfgDate}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  />
+                  <input type="date" name="mfgDate" value={formData.mfgDate} onChange={handleChange} required className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Expiry Date *</label>
-                  <input
-                    type="date"
-                    name="expiryDate"
-                    value={formData.expiryDate}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  />
+                  <input type="date" name="expiryDate" value={formData.expiryDate} onChange={handleChange} required className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                 </div>
               </div>
-              
+
               {shelfLife !== null && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Info className="text-blue-600" size={16} />
-                    <p className="text-sm text-blue-800">
-                      Shelf Life: <span className="font-semibold">{shelfLife} days</span>
-                    </p>
+                    <p className="text-sm text-blue-800">Shelf Life: <span className="font-semibold">{shelfLife} days</span></p>
                   </div>
                 </motion.div>
               )}
@@ -310,11 +336,7 @@ const AddProduct: React.FC = () => {
               <Button type="submit" variant="primary" disabled={loading}>
                 {loading ? (
                   <>
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                      className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
-                    />
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
                     Adding Product...
                   </>
                 ) : (
@@ -324,18 +346,13 @@ const AddProduct: React.FC = () => {
                   </>
                 )}
               </Button>
-              <button
-                type="button"
-                onClick={() => setFormData({
-                  name: '',
-                  category: '',
-                  mrp: '',
-                  stock: '',
-                  mfgDate: '',
-                  expiryDate: ''
-                })}
-                className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
+              <button type="button" onClick={() => {
+                setFormData({ name: '', category: '', mrp: '', stock: '', mfgDate: '', expiryDate: '' });
+                setImagePreview(null);
+                setImageFile(null);
+                setSuccessMessage('');
+                setErrorMessage('');
+              }} className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
                 Clear Form
               </button>
             </div>
@@ -343,24 +360,15 @@ const AddProduct: React.FC = () => {
         </motion.div>
 
         {/* Sidebar - Preview & Info */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.2 }}
-          className="space-y-6"
-        >
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="space-y-6">
           {/* Product Preview */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-gray-800 mb-4">Product Preview</h3>
-            
+
             <div className="aspect-square bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg mb-4 flex items-center justify-center">
-              {imagePreview ? (
-                <img src={imagePreview} alt="Product" className="w-full h-full object-cover" />
-              ) : (
-                <ImageIcon className="text-gray-400" size={48} />
-              )}
+              {imagePreview ? <img src={imagePreview} alt="Product" className="w-full h-full object-cover" /> : <ImageIcon className="text-gray-400" size={48} />}
             </div>
-            
+
             <div className="space-y-3">
               <div>
                 <p className="text-xs text-gray-500">Product Name</p>

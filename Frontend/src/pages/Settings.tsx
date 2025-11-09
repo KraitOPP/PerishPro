@@ -1,21 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, Store, Bell, Shield, Settings as SettingsIcon, Mail, Phone, MapPin, Save, CheckCircle } from 'lucide-react';
+import { User, Store, Bell, Shield, Settings as SettingsIcon, Mail, Phone, MapPin, Save } from 'lucide-react';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 import Alert from '../components/common/Alert';
 import useAuthStore from '../store/authStore';
+import { getProfile, updateProfile, updatePassword } from '../services/userService';
 
 const SettingsPage: React.FC = () => {
-  const user = useAuthStore((state) => state.user);
+  const authUser = useAuthStore((s: any) => s.user);
+  const setAuthUser = useAuthStore((s: any) => s.setUser); // best-effort setter (may be undefined)
   const [activeTab, setActiveTab] = useState<'profile' | 'store' | 'notifications' | 'security'>('profile');
-  
+
   const [formData, setFormData] = useState({
-    name: user?.name || '',
-    email: user?.email || '',
-    storeName: 'PerishPro Retail Store',
-    phone: '',
-    address: '',
+    name: authUser?.name || '',
+    email: authUser?.email || '',
+    storeName: authUser?.storeName || 'PerishPro Retail Store',
+    phone: authUser?.phone || '',
+    address: authUser?.storeAddress || '',
     notifications: {
       email: true,
       push: true,
@@ -24,57 +26,145 @@ const SettingsPage: React.FC = () => {
       priceChanges: false
     }
   });
-  
+
+  // security fields
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+
   const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
-  
-  const handleNotificationChange = (key: string) => {
-    setFormData({
-      ...formData,
-      notifications: {
-        ...formData.notifications,
-        [key]: !formData.notifications[key as keyof typeof formData.notifications]
+
+  // Load profile on mount (or when authUser changes)
+  useEffect(() => {
+    let mounted = true;
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        const res: any = await getProfile();
+        // res is expected to be { success: true, user }
+        const data = res?.user ?? res;
+        if (!mounted) return;
+        setFormData((prev) => ({
+          ...prev,
+          name: data?.name ?? prev.name,
+          email: data?.email ?? prev.email,
+          phone: data?.phone ?? prev.phone,
+          storeName: data?.storeName ?? prev.storeName,
+          address: data?.storeAddress ?? prev.address
+        }));
+        // also update local store if it is empty
+        if (!authUser && typeof setAuthUser === 'function' && data) {
+          setAuthUser(data);
+        }
+      } catch (err: any) {
+        console.error('Failed to load profile', err);
+        setErrorMessage(typeof err === 'string' ? err : err?.message ?? 'Failed to load profile');
+      } finally {
+        setLoading(false);
       }
-    });
+    };
+
+    load();
+
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    // handle nested notification toggles separately
+    if (name.startsWith('notifications.')) {
+      const key = name.split('.')[1];
+      setFormData((prev) => ({
+        ...prev,
+        notifications: {
+          ...prev.notifications,
+          [key]: !prev.notifications[key as keyof typeof prev.notifications]
+        }
+      }));
+      return;
+    }
+
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
-  
+
+  const handleNotificationChange = (key: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      notifications: {
+        ...prev.notifications,
+        [key]: !prev.notifications[key as keyof typeof prev.notifications]
+      }
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setSuccessMessage('');
-    
+    setErrorMessage('');
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setSuccessMessage('Settings updated successfully!');
-    } catch (err) {
-      console.error(err);
+      setLoading(true);
+
+      if (activeTab === 'security') {
+        // Change password flow
+        if (!currentPassword || !newPassword) {
+          setErrorMessage('Please fill current and new password fields.');
+          return;
+        }
+        if (newPassword !== confirmNewPassword) {
+          setErrorMessage('New password and confirmation do not match.');
+          return;
+        }
+
+        // call service
+        const res = await updatePassword({ currentPassword, newPassword });
+        const message = res?.message ?? 'Password updated successfully';
+        setSuccessMessage(message);
+
+        // clear password fields
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmNewPassword('');
+        return;
+      }
+
+      // For profile/store/notifications tabs — only send fields the API expects
+      // API accepts: name, email, phone, storeName, storeAddress
+      const payload: any = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        storeName: formData.storeName,
+        storeAddress: formData.address
+      };
+
+      const res = await updateProfile(payload);
+      const message = res?.message ?? 'Profile updated successfully';
+      setSuccessMessage(message);
+
+      // update auth store user if returned
+      const updatedUser = res?.user;
+      if (updatedUser && typeof setAuthUser === 'function') {
+        setAuthUser(updatedUser);
+      }
+    } catch (err: any) {
+      console.error('Failed to save settings', err);
+      setErrorMessage(typeof err === 'string' ? err : err?.message ?? 'Failed to save settings');
     } finally {
       setLoading(false);
     }
   };
-  
-  const tabs = [
-    { id: 'profile', label: 'Profile', icon: User },
-    { id: 'store', label: 'Store Info', icon: Store },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'security', label: 'Security', icon: Shield }
-  ];
-  
+
   return (
     <div className="max-w-6xl">
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
-      >
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl">
             <SettingsIcon className="text-white" size={24} />
@@ -87,25 +177,28 @@ const SettingsPage: React.FC = () => {
       </motion.div>
 
       {successMessage && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="mb-6"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-6">
           <Alert message={successMessage} type="success" onClose={() => setSuccessMessage('')} />
+        </motion.div>
+      )}
+
+      {errorMessage && (
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-6">
+          <Alert message={errorMessage} type="error" onClose={() => setErrorMessage('')} />
         </motion.div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Sidebar Tabs */}
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="lg:col-span-1"
-        >
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="lg:col-span-1">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2">
             <nav className="space-y-1">
-              {tabs.map(tab => {
+              {[
+                { id: 'profile', label: 'Profile', icon: User },
+                { id: 'store', label: 'Store Info', icon: Store },
+                { id: 'notifications', label: 'Notifications', icon: Bell },
+                { id: 'security', label: 'Security', icon: Shield }
+              ].map((tab) => {
                 const Icon = tab.icon;
                 return (
                   <button
@@ -127,12 +220,7 @@ const SettingsPage: React.FC = () => {
         </motion.div>
 
         {/* Content Area */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.1 }}
-          className="lg:col-span-3"
-        >
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="lg:col-span-3">
           <form onSubmit={handleSubmit}>
             {/* Profile Tab */}
             {activeTab === 'profile' && (
@@ -148,12 +236,9 @@ const SettingsPage: React.FC = () => {
                     <User size={32} className="text-white" />
                   </div>
                   <div>
-                    <h3 className="text-gray-800 mb-1">{user?.name || 'User'}</h3>
-                    <p className="text-sm text-gray-600 mb-2">{user?.email || 'user@example.com'}</p>
-                    <button
-                      type="button"
-                      className="text-sm text-blue-600 hover:text-blue-700"
-                    >
+                    <h3 className="text-gray-800 mb-1">{authUser?.name || 'User'}</h3>
+                    <p className="text-sm text-gray-600 mb-2">{authUser?.email || 'user@example.com'}</p>
+                    <button type="button" className="text-sm text-blue-600 hover:text-blue-700">
                       Change Avatar
                     </button>
                   </div>
@@ -270,85 +355,33 @@ const SettingsPage: React.FC = () => {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-gray-800">Email Notifications</p>
-                      <p className="text-sm text-gray-600">Receive updates via email</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifications.email}
-                        onChange={() => handleNotificationChange('email')}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-gray-800">Push Notifications</p>
-                      <p className="text-sm text-gray-600">Receive push notifications in browser</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifications.push}
-                        onChange={() => handleNotificationChange('push')}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-gray-800">Expiry Alerts</p>
-                      <p className="text-sm text-gray-600">Get notified about expiring products</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifications.expiry}
-                        onChange={() => handleNotificationChange('expiry')}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-gray-800">Low Stock Alerts</p>
-                      <p className="text-sm text-gray-600">Alerts when inventory runs low</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifications.lowStock}
-                        onChange={() => handleNotificationChange('lowStock')}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-gray-800">Price Change Notifications</p>
-                      <p className="text-sm text-gray-600">Updates on price recommendations</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifications.priceChanges}
-                        onChange={() => handleNotificationChange('priceChanges')}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
+                  {Object.entries(formData.notifications).map(([key, val]) => {
+                    const labelMap: any = {
+                      email: ['Email Notifications', 'Receive updates via email'],
+                      push: ['Push Notifications', 'Receive push notifications in browser'],
+                      expiry: ['Expiry Alerts', 'Get notified about expiring products'],
+                      lowStock: ['Low Stock Alerts', 'Alerts when inventory runs low'],
+                      priceChanges: ['Price Change Notifications', 'Updates on price recommendations']
+                    };
+                    return (
+                      <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div>
+                          <p className="text-gray-800">{labelMap[key][0]}</p>
+                          <p className="text-sm text-gray-600">{labelMap[key][1]}</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={val as boolean}
+                            onChange={() => handleNotificationChange(key)}
+                            className="sr-only peer"
+                            name={`notifications.${key}`}
+                          />
+                          <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -366,6 +399,8 @@ const SettingsPage: React.FC = () => {
                     <label className="block text-sm text-gray-700 mb-2">Current Password</label>
                     <input
                       type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
                       placeholder="••••••••"
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
@@ -375,6 +410,8 @@ const SettingsPage: React.FC = () => {
                     <label className="block text-sm text-gray-700 mb-2">New Password</label>
                     <input
                       type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="••••••••"
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
@@ -384,6 +421,8 @@ const SettingsPage: React.FC = () => {
                     <label className="block text-sm text-gray-700 mb-2">Confirm New Password</label>
                     <input
                       type="password"
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
                       placeholder="••••••••"
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
@@ -411,11 +450,7 @@ const SettingsPage: React.FC = () => {
               <Button type="submit" variant="primary" disabled={loading}>
                 {loading ? (
                   <>
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                      className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
-                    />
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
                     Saving...
                   </>
                 ) : (
@@ -425,10 +460,19 @@ const SettingsPage: React.FC = () => {
                   </>
                 )}
               </Button>
-              <button
-                type="button"
-                className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
+              <button type="button" className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => {
+                // reset form to authUser values
+                setFormData({
+                  name: authUser?.name || '',
+                  email: authUser?.email || '',
+                  storeName: authUser?.storeName || 'PerishPro Retail Store',
+                  phone: authUser?.phone || '',
+                  address: authUser?.storeAddress || '',
+                  notifications: formData.notifications
+                });
+                setSuccessMessage('');
+                setErrorMessage('');
+              }}>
                 Cancel
               </button>
             </div>
