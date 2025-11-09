@@ -137,8 +137,7 @@ const listProducts = async (req, res) => {
 // getProduct
 const getProduct = async (req, res) => {
   try {
-    const id = req.params.id;
-    const oid = toObjectId(id);
+    const oid = req.params.id;
     if (!oid) return res.status(400).json({ success: false, message: 'Invalid product id' });
 
     const product = await Product.findById(oid).lean();
@@ -237,8 +236,7 @@ const addProduct = async (req, res) => {
  */
 const updateProduct = async (req, res) => {
   try {
-    const id = req.params.id;
-    const oid = toObjectId(id);
+    const oid = req.params.id;
     if (!oid) return res.status(400).json({ success: false, message: 'Invalid product id' });
 
     // 1) Handle image upload if present
@@ -313,9 +311,8 @@ const updateProduct = async (req, res) => {
 // deleteProduct
 const deleteProduct = async (req, res) => {
   try {
-    const id = req.params.id;
+    const oid = req.params.id;
     const force = req.query.force === 'true';
-    const oid = toObjectId(id);
     if (!oid) return res.status(400).json({ success: false, message: 'Invalid product id' });
 
     if (force) {
@@ -336,9 +333,8 @@ const deleteProduct = async (req, res) => {
 // updateStock
 const updateStock = async (req, res) => {
   try {
-    const id = req.params.id;
+    const oid = req.params.id;
     const { op, amount } = req.body;
-    const oid = toObjectId(id);
     if (!oid) return res.status(400).json({ success: false, message: 'Invalid product id' });
     const amt = Number(amount);
     if (isNaN(amt) || amt < 0) return res.status(400).json({ success: false, message: 'Invalid amount' });

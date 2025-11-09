@@ -1,4 +1,3 @@
-// src/pages/AddProduct.tsx
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import {
@@ -82,12 +81,9 @@ const AddProduct: React.FC = () => {
   };
 
   const extractErrorMessage = (err: any) => {
-    // Axios style error with response.data
     if (err?.response?.data) {
       const data = err.response.data;
-      // Prefer explicit message
       if (data.message) return data.message;
-      // If server sent zod issues as array-like string/object
       if (data.error || data.errors) {
         if (typeof data.error === 'string') return data.error;
         if (Array.isArray(data.errors)) return data.errors.join(', ');
@@ -95,15 +91,11 @@ const AddProduct: React.FC = () => {
       }
     }
 
-    // If the backend returned a Zod error serialized in message
     if (err?.message && typeof err.message === 'string') {
       return err.message;
     }
 
-    // If thrown string
     if (typeof err === 'string') return err;
-
-    // Fallback
     return 'Failed to add product';
   };
 
@@ -121,58 +113,43 @@ const AddProduct: React.FC = () => {
     setLoading(true);
 
     try {
-      // parse numeric fields
       console.log(e);
       const mrpNum = parseFloat(formData.mrp);
       const stockNum = Number(formData.stock);
 
-      // Build payload that matches Zod schema exactly:
       const payload: any = {
-        // optional storeId / sku left undefined unless you have them
         name: formData.name.trim(),
         category: formData.category,
         description: '',
 
-        // pricing object (required fields)
         pricing: {
-          costPrice: Number((mrpNum * 0.4).toFixed(2)), // default assumption
+          costPrice: Number((mrpNum * 0.4).toFixed(2)), 
           mrp: mrpNum,
           currentPrice: mrpNum
-          // profitMargin optional - model pre-save will compute if needed
         },
 
-        // stock object (required fields)
         stock: {
           quantity: stockNum,
           unit: 'units',
           reorderLevel: 0
         },
 
-        // perishable object (required fields) — send ISO strings or Date objects
         perishable: {
           manufactureDate: new Date(formData.mfgDate).toISOString(),
           expiryDate: new Date(formData.expiryDate).toISOString()
         },
 
-        // optional objects (send empty objects to avoid "missing" errors, but zod marks them optional)
         aiMetrics: {},
         sales: {}
       };
 
-      // If you want to set status explicitly:
-      // payload.status = 'active';
-
-      // If user uploaded an image file -> use multipart/form-data flow
       let res;
       if (imageFile) {
-        // productService will wrap payload as JSON under 'data' and append the file as 'image'
         res = await addProduct(payload, { useFormData: true, imageFile });
       } else {
-        // no file: send JSON
         res = await addProduct(payload);
       }
 
-      // success
       setSuccessMessage(res?.message ?? 'Product added successfully!');
       setFormData({
         name: '',

@@ -34,6 +34,7 @@ export const listProducts = async (options = {}) => {
 export const getProduct = async (id) => {
   try {
     const response = await api.get(`/products/${id}`);
+    console.log(response);
     return response.data;
   } catch (error) {
     const message =
@@ -80,7 +81,7 @@ export const addProduct = async (payload, options = {}) => {
 
 export const updateProduct = async (id, payload) => {
   try {
-    const response = await api.patch(`/products/${id}`, payload);
+    const response = await api.put(`/products/${id}`, payload);
     return response.data;
   } catch (error) {
     const message =
@@ -111,7 +112,7 @@ export const deleteProduct = async (id, options = {}) => {
 export const updateStock = async (id, opOrPayload, amount) => {
   try {
     const payload = typeof opOrPayload === 'object' ? opOrPayload : { op: opOrPayload, amount };
-    const response = await api.patch(`/products/${id}/stock`, payload);
+    const response = await api.put(`/products/${id}/stock`, payload);
     return response.data;
   } catch (error) {
     const message =
