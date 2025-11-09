@@ -1,6 +1,8 @@
-import mongoose, { Schema } from 'mongoose';
+// models/Sale.js
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
-
+// Subdocument for each sold item
 const SaleItemSchema = new Schema(
   {
     productId: {
@@ -9,10 +11,6 @@ const SaleItemSchema = new Schema(
       required: true
     },
     productName: {
-      type: String,
-      required: true
-    },
-    sku: {
       type: String,
       required: true
     },
@@ -37,19 +35,22 @@ const SaleItemSchema = new Schema(
     },
     subtotal: {
       type: Number,
-      required: true
+      required: true,
+      min: [0, 'Subtotal must be positive']
     },
     profit: {
       type: Number,
       required: true
     },
     discount: {
+      // keep nested 'type' field but define it explicitly to avoid mongoose confusion
       type: {
         type: String,
-        enum: ['percentage', 'fixed']
+        enum: ['percentage', 'fixed'],
+        default: 'fixed'
       },
-      value: { type: Number, min: 0 },
-      reason: { type: String }
+      value: { type: Number, min: 0, default: 0 },
+      reason: { type: String, default: '' }
     }
   },
   { _id: false }
@@ -57,12 +58,6 @@ const SaleItemSchema = new Schema(
 
 const SaleSchema = new Schema(
   {
-    storeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Store',
-      required: true,
-      index: true
-    },
     saleNumber: {
       type: String,
       required: true,
@@ -73,8 +68,8 @@ const SaleSchema = new Schema(
       type: [SaleItemSchema],
       required: true,
       validate: {
-        validator: function(items) {
-          return items.length > 0;
+        validator: function (items) {
+          return Array.isArray(items) && items.length > 0;
         },
         message: 'Sale must have at least one item'
       }
@@ -119,44 +114,17 @@ const SaleSchema = new Schema(
       },
       transactionId: {
         type: String
-      },
-      paidAmount: {
-        type: Number,
-        required: true,
-        min: 0
-      },
-      changeAmount: {
-        type: Number,
-        min: 0,
-        default: 0
       }
     },
     customer: {
       name: { type: String },
       email: { type: String },
-      phone: { type: String },
-      loyaltyId: { type: String }
-    },
-    cashier: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    notes: {
-      type: String,
-      maxlength: [500, 'Notes cannot exceed 500 characters']
+      phone: { type: String }
     },
     metadata: {
       wasExpiringSoon: { type: Boolean, default: false },
       aiPricingUsed: { type: Boolean, default: false },
       wastePreventionSale: { type: Boolean, default: false }
-    },
-    refund: {
-      refunded: { type: Boolean, default: false },
-      refundDate: { type: Date },
-      refundAmount: { type: Number, min: 0 },
-      refundReason: { type: String },
-      refundedBy: { type: Schema.Types.ObjectId, ref: 'User' }
     }
   },
   {
@@ -165,25 +133,44 @@ const SaleSchema = new Schema(
 );
 
 // Indexes
-SaleSchema.index({ storeId: 1, createdAt: -1 });
 SaleSchema.index({ saleNumber: 1 });
-SaleSchema.index({ cashier: 1 });
 SaleSchema.index({ 'payment.status': 1 });
 SaleSchema.index({ createdAt: -1 });
 
-// Pre-save middleware to generate sale number
-SaleSchema.pre('save', async function(next) {
-  if (!this.saleNumber) {
-    const date = new Date();
-    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const count = await mongoose.model('Sale').countDocuments({
-      createdAt: { $gte: new Date(date.setHours(0, 0, 0, 0)) }
-    });
-    this.saleNumber = `SL-${dateStr}-${String(count + 1).padStart(4, '0')}`;
+// Pre-save middleware to generate sale number (daily incremental)
+SaleSchema.pre('save', async function (next) {
+  try {
+    // only create saleNumber when missing (new docs)
+    if (!this.saleNumber) {
+      const now = new Date();
+      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+
+      // start of current day (local)
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+      // Count documents created today
+      const SaleModel = mongoose.models.Sale || mongoose.model('Sale', SaleSchema);
+      const count = await SaleModel.countDocuments({
+        createdAt: { $gte: startOfDay }
+      });
+
+      this.saleNumber = `SL-${dateStr}-${String(count + 1).padStart(4, '0')}`;
+    }
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
+});
+
+// Optional: virtuals for summary info
+SaleSchema.virtual('itemCount').get(function () {
+  return Array.isArray(this.items) ? this.items.length : 0;
+});
+
+SaleSchema.virtual('isPaid').get(function () {
+  return this.payment?.status === 'completed';
 });
 
 const Sale = mongoose.model('Sale', SaleSchema);
 
-export default Sale;
+module.exports = Sale;

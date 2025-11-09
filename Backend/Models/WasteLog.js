@@ -1,13 +1,8 @@
-import mongoose, { Schema } from 'mongoose';
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
 const WasteLogSchema = new Schema(
   {
-    storeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Store',
-      required: true,
-      index: true
-    },
     productId: {
       type: Schema.Types.ObjectId,
       ref: 'Product',
@@ -15,10 +10,6 @@ const WasteLogSchema = new Schema(
       index: true
     },
     productName: {
-      type: String,
-      required: true
-    },
-    sku: {
       type: String,
       required: true
     },
@@ -80,34 +71,7 @@ const WasteLogSchema = new Schema(
         type: Number,
         min: 0
       }
-    },
-    disposal: {
-      method: {
-        type: String,
-        required: true,
-        enum: ['trash', 'compost', 'donation', 'recycle', 'other']
-      },
-      donatedTo: {
-        type: String
-      },
-      disposalDate: {
-        type: Date,
-        required: true,
-        default: Date.now
-      }
-    },
-    reportedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    verifiedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    images: [{
-      type: String
-    }]
+    }
   },
   {
     timestamps: true
@@ -115,26 +79,24 @@ const WasteLogSchema = new Schema(
 );
 
 // Indexes
-WasteLogSchema.index({ storeId: 1, createdAt: -1 });
 WasteLogSchema.index({ productId: 1 });
 WasteLogSchema.index({ reason: 1 });
-WasteLogSchema.index({ 'disposal.disposalDate': -1 });
 WasteLogSchema.index({ category: 1 });
 
 // Pre-save middleware to calculate days expired
-WasteLogSchema.pre('save', function(next) {
-  if (this.perishableInfo.expiryDate) {
+WasteLogSchema.pre('save', function (next) {
+  if (this.perishableInfo && this.perishableInfo.expiryDate) {
     const diffTime = Date.now() - this.perishableInfo.expiryDate.getTime();
     this.perishableInfo.daysExpired = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
   }
   next();
 });
 
-// Virtual for waste percentage
-WasteLogSchema.virtual('wastePercent').get(function() {
+// Virtual field for waste percentage
+WasteLogSchema.virtual('wastePercent').get(function () {
   return this.retailValue > 0 ? ((this.costValue / this.retailValue) * 100).toFixed(2) : 0;
 });
 
 const WasteLog = mongoose.model('WasteLog', WasteLogSchema);
 
-export default WasteLog;
+module.exports = WasteLog;

@@ -1,13 +1,8 @@
-import mongoose, { Schema } from 'mongoose';
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
 const PricePredictionSchema = new Schema(
   {
-    storeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Store',
-      required: true,
-      index: true
-    },
     productId: {
       type: Schema.Types.ObjectId,
       ref: 'Product',
@@ -23,30 +18,12 @@ const PricePredictionSchema = new Schema(
       currentPrice: { type: Number, required: true, min: 0 },
       stockLevel: { type: Number, required: true, min: 0 },
       daysToExpiry: { type: Number, required: true, min: 0 },
-      demandScore: { type: Number, required: true, min: 0, max: 100 },
-      salesVelocity: { type: Number, required: true, min: 0 }
+      demandScore: { type: Number, required: true, min: 0, max: 100 }
     },
     recommendations: {
-      optimalPrice: {
-        type: Number,
-        required: true,
-        min: 0
-      },
-      priceChangePercent: {
-        type: Number,
-        required: true
-      },
-      confidenceScore: {
-        type: Number,
-        required: true,
-        min: 0,
-        max: 100
-      },
-      reasoning: {
-        type: String,
-        required: true,
-        maxlength: 1000
-      }
+      optimalPrice: { type: Number, required: true, min: 0 },
+      priceChangePercent: { type: Number, required: true },
+      confidenceScore: { type: Number, required: true, min: 0, max: 100 }
     },
     scenarios: {
       current: {
@@ -69,54 +46,18 @@ const PricePredictionSchema = new Schema(
         expectedProfit: { type: Number, required: true }
       }
     },
-    forecast: [{
-      day: { type: Number, required: true },
-      recommendedPrice: { type: Number, required: true, min: 0 },
-      expectedDemand: { type: Number, required: true, min: 0, max: 100 },
-      expectedSales: { type: Number, required: true, min: 0 }
-    }],
+    forecast: [
+      {
+        day: { type: Number, required: true },
+        recommendedPrice: { type: Number, required: true, min: 0 },
+        expectedDemand: { type: Number, required: true, min: 0, max: 100 },
+        expectedSales: { type: Number, required: true, min: 0 }
+      }
+    ],
     impact: {
-      wasteReduction: {
-        type: Number,
-        required: true,
-        min: 0,
-        max: 100
-      },
-      profitIncrease: {
-        type: Number,
-        required: true
-      },
-      revenueChange: {
-        type: Number,
-        required: true
-      },
-      sellThroughRate: {
-        type: Number,
-        required: true,
-        min: 0,
-        max: 100
-      }
-    },
-    algorithm: {
-      version: {
-        type: String,
-        required: true,
-        default: '1.0.0'
-      },
-      modelType: {
-        type: String,
-        required: true,
-        default: 'gradient-boosting'
-      },
-      features: [{
-        type: String
-      }],
-      accuracy: {
-        type: Number,
-        min: 0,
-        max: 100,
-        default: 94
-      }
+      wasteReduction: { type: Number, required: true, min: 0, max: 100 },
+      profitIncrease: { type: Number, required: true },
+      revenueChange: { type: Number, required: true }
     },
     implemented: {
       type: Boolean,
@@ -124,10 +65,6 @@ const PricePredictionSchema = new Schema(
     },
     implementedAt: {
       type: Date
-    },
-    implementedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User'
     },
     actualResults: {
       actualSales: { type: Number, min: 0 },
@@ -142,30 +79,27 @@ const PricePredictionSchema = new Schema(
       index: true
     }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 // Indexes
-PricePredictionSchema.index({ storeId: 1, productId: 1, predictionDate: -1 });
+PricePredictionSchema.index({ productId: 1, predictionDate: -1 });
 PricePredictionSchema.index({ implemented: 1 });
 PricePredictionSchema.index({ expiresAt: 1 });
 PricePredictionSchema.index({ 'recommendations.confidenceScore': -1 });
 
-// TTL Index to auto-delete old predictions
+// TTL index to auto-delete expired predictions
 PricePredictionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Pre-save middleware to set expiration
-PricePredictionSchema.pre('save', function(next) {
+PricePredictionSchema.pre('save', function (next) {
   if (!this.expiresAt) {
-    // Predictions expire after 7 days or when product expires, whichever comes first
     const sevenDaysFromNow = new Date();
     sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
-    
+
     const productExpiryDate = new Date();
-    productExpiryDate.setDate(productExpiryDate.getDate() + this.currentMetrics.daysToExpiry);
-    
+    productExpiryDate.setDate(productExpiryDate.getDate() + (this.currentMetrics?.daysToExpiry || 0));
+
     this.expiresAt = sevenDaysFromNow < productExpiryDate ? sevenDaysFromNow : productExpiryDate;
   }
   next();
@@ -173,4 +107,4 @@ PricePredictionSchema.pre('save', function(next) {
 
 const PricePrediction = mongoose.model('PricePrediction', PricePredictionSchema);
 
-export default PricePrediction;
+module.exports = PricePrediction;
