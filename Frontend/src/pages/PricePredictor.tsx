@@ -1,8 +1,71 @@
+// src/pages/PricePredictor.tsx
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { TrendingUp, DollarSign, Package, Calendar, Percent, TrendingDown, AlertTriangle, CheckCircle, BarChart3, Sparkles } from 'lucide-react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  TrendingUp,
+  DollarSign,
+  Package,
+  Calendar,
+  Percent,
+  CheckCircle,
+  BarChart3,
+  Sparkles,
+  Hash
+} from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
+} from 'recharts';
 import Button from '../components/common/Button';
+
+type ForecastPoint = {
+  day: number;
+  expectedDemand?: number;
+  expectedSales?: number;
+  recommendedPrice: number;
+};
+
+type MlResponse = {
+  algorithm?: { accuracy?: number };
+  currentMetrics?: {
+    currentPrice?: number;
+    daysToExpiry?: number;
+    stockLevel?: number;
+  };
+  impact?: {
+    profitIncrease?: number;
+    revenueChange?: number;
+    sellThroughRate?: number;
+    wasteReduction?: number;
+  };
+  recommendations?: {
+    confidenceScore?: number;
+    optimalPrice?: number;
+    priceChangePercent?: number;
+    reasoning?: string;
+  };
+  scenarios?: {
+    optimal?: {
+      price?: number;
+      expectedSales?: number;
+      expectedRevenue?: number;
+      expectedWaste?: number;
+      expectedProfit?: number;
+      expectedLoss?: number;
+      discountPercentage?: number;
+      netProfit?: number;
+    };
+  };
+  forecast?: ForecastPoint[];
+};
+
+const FLASK_URL =
+  (import.meta as any).env?.VITE_ML_URL?.trim() || 'http://localhost:8000/predict';
 
 const PricePredictor: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -12,56 +75,73 @@ const PricePredictor: React.FC = () => {
     stockQuantity: '150',
     daysToExpiry: '7',
     currentDemand: 'medium',
-    targetProfit: '25'
+    targetProfit: '25',
+    mlProductId: '38-732-7667',
   });
-  
-  const [showResults, setShowResults] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
-  
-  const runSimulation = async () => {
+  const [error, setError] = useState<string>('');
+  const [result, setResult] = useState<MlResponse | null>(null);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+  const runPrediction = async () => {
+    setError('');
+    setResult(null);
     setLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setShowResults(true);
-    setLoading(false);
+
+    try {
+      const payload = {
+        productId: formData.mlProductId.trim(),
+        stockLevel: Number(formData.stockQuantity) || 0,
+        daysToExpiry: Math.max(0, Number(formData.daysToExpiry) || 0),
+      };
+
+      const res = await fetch(FLASK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`ML API ${res.status}: ${txt || 'request failed'}`);
+      }
+
+      const data: MlResponse = await res.json();
+      setResult(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to get prediction');
+    } finally {
+      setLoading(false);
+    }
   };
-  
-  // Mock simulation data
-  const predictedPrice = parseFloat(formData.currentPrice) * 0.85;
-  const potentialRevenue = predictedPrice * parseInt(formData.stockQuantity);
-  const wasteReduction = 78;
-  const profitIncrease = 32;
-  
-  const priceScenarios = [
-    { name: 'Current', price: parseFloat(formData.currentPrice), sales: 45, revenue: 224, waste: 35 },
-    { name: 'Optimal', price: predictedPrice, sales: 92, revenue: 388, waste: 8 },
-    { name: 'Aggressive', price: predictedPrice * 0.75, sales: 100, revenue: 299, waste: 0 }
-  ];
-  
-  const demandForecast = [
-    { day: 'Day 1', demand: 85, price: parseFloat(formData.currentPrice) },
-    { day: 'Day 2', demand: 78, price: parseFloat(formData.currentPrice) * 0.95 },
-    { day: 'Day 3', demand: 72, price: parseFloat(formData.currentPrice) * 0.90 },
-    { day: 'Day 4', demand: 92, price: parseFloat(formData.currentPrice) * 0.85 },
-    { day: 'Day 5', demand: 98, price: parseFloat(formData.currentPrice) * 0.80 },
-    { day: 'Day 6', demand: 100, price: parseFloat(formData.currentPrice) * 0.75 },
-    { day: 'Day 7', demand: 100, price: parseFloat(formData.currentPrice) * 0.70 }
-  ];
-  
+
+  const optimalPrice =
+    result?.recommendations?.optimalPrice ??
+    result?.scenarios?.optimal?.price;
+
+  const accuracy = result?.algorithm?.accuracy;
+  const confidence = result?.recommendations?.confidenceScore;
+  const priceChangePct = result?.recommendations?.priceChangePercent;
+  const reasoning = result?.recommendations?.reasoning;
+  const impact = result?.impact;
+
+  // Build chart data for first 5 days
+  const priceForecastData =
+    (result?.forecast || [])
+      .slice(0, 5)
+      .map(pt => ({
+        name: `Day ${pt.day}`,
+        price: Number(pt.recommendedPrice || 0),
+      }));
+
   return (
     <div className="max-w-7xl">
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
-      >
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl">
             <TrendingUp className="text-white" size={24} />
@@ -75,18 +155,33 @@ const PricePredictor: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Input Panel */}
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="lg:col-span-1 space-y-6"
-        >
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="lg:col-span-1 space-y-6">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center gap-2 mb-5">
               <Package className="text-blue-600" size={20} />
               <h2 className="text-gray-800">Product Details</h2>
             </div>
-            
+
             <div className="space-y-4">
+              {/* ML Product ID */}
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">
+                  ML Product ID <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    name="mlProductId"
+                    value={formData.mlProductId}
+                    onChange={handleChange}
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    placeholder="e.g. 38-732-7667"
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Must match the ID used in the ML dataset.</p>
+              </div>
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Product Name</label>
                 <input
@@ -97,7 +192,7 @@ const PricePredictor: React.FC = () => {
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Category</label>
                 <select
@@ -111,9 +206,10 @@ const PricePredictor: React.FC = () => {
                   <option value="Meat">Meat</option>
                   <option value="Bakery">Bakery</option>
                   <option value="Frozen">Frozen</option>
+                  <option value="Beverages">Beverages</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Current Price ($)</label>
                 <div className="relative">
@@ -128,7 +224,7 @@ const PricePredictor: React.FC = () => {
                   />
                 </div>
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Stock Quantity</label>
                 <input
@@ -139,7 +235,7 @@ const PricePredictor: React.FC = () => {
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Days to Expiry</label>
                 <div className="relative">
@@ -153,7 +249,8 @@ const PricePredictor: React.FC = () => {
                   />
                 </div>
               </div>
-              
+
+              {/* UX-only fields */}
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Current Demand</label>
                 <select
@@ -167,7 +264,7 @@ const PricePredictor: React.FC = () => {
                   <option value="high">High</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Target Profit Margin (%)</label>
                 <div className="relative">
@@ -182,17 +279,13 @@ const PricePredictor: React.FC = () => {
                 </div>
               </div>
             </div>
-            
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              className="mt-6"
-            >
+
+            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="mt-6">
               <Button
                 variant="primary"
                 className="w-full"
-                onClick={runSimulation}
-                disabled={loading}
+                onClick={runPrediction}
+                disabled={loading || !formData.mlProductId.trim()}
               >
                 {loading ? (
                   <>
@@ -201,7 +294,7 @@ const PricePredictor: React.FC = () => {
                       transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                       className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
                     />
-                    Running Simulation...
+                    Running…
                   </>
                 ) : (
                   <>
@@ -211,6 +304,8 @@ const PricePredictor: React.FC = () => {
                 )}
               </Button>
             </motion.div>
+
+            {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
           </div>
         </motion.div>
 
@@ -221,7 +316,7 @@ const PricePredictor: React.FC = () => {
           transition={{ delay: 0.1 }}
           className="lg:col-span-2 space-y-6"
         >
-          {!showResults ? (
+          {!result ? (
             <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-200 p-12 flex flex-col items-center justify-center text-center min-h-[600px]">
               <motion.div
                 animate={{ scale: [1, 1.1, 1] }}
@@ -232,179 +327,124 @@ const PricePredictor: React.FC = () => {
               </motion.div>
               <h3 className="text-gray-800 mb-2">Ready to Optimize Pricing</h3>
               <p className="text-gray-600 max-w-md">
-                Enter your product details and click "Run AI Prediction" to see optimized pricing strategies, profit projections, and waste reduction insights.
+                Enter ML Product ID, stock, and days to expiry. We’ll fetch the optimal price straight from your ML model.
               </p>
             </div>
           ) : (
             <>
-              {/* Key Metrics */}
-              <div className="grid grid-cols-2 gap-4">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-3">
+              {/* Only Optimal Scenario */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-green-100 rounded-lg">
                       <TrendingUp className="text-green-600" size={20} />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Recommended Price</p>
-                      <p className="text-2xl text-gray-800">${predictedPrice.toFixed(2)}</p>
+                      <p className="text-sm text-gray-600">Optimal Price</p>
+                      <p className="text-2xl text-gray-800">
+                        ${Number(optimalPrice ?? 0).toFixed(2)}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-green-600">↓ 15% from current</span>
-                  </div>
-                </motion.div>
+                  {typeof priceChangePct === 'number' && (
+                    <p className="text-sm text-green-600">
+                      {priceChangePct < 0 ? '↓' : '↑'} {Math.abs(priceChangePct).toFixed(2)}% vs current
+                    </p>
+                  )}
+                </div>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-3">
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-blue-100 rounded-lg">
-                      <DollarSign className="text-blue-600" size={20} />
+                      <CheckCircle className="text-blue-600" size={20} />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Projected Revenue</p>
-                      <p className="text-2xl text-gray-800">${potentialRevenue.toFixed(0)}</p>
+                      <p className="text-sm text-gray-600">Confidence</p>
+                      <p className="text-2xl text-gray-800">
+                        {typeof confidence === 'number' ? `${confidence}%` : '—'}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-blue-600">For {formData.stockQuantity} units</span>
-                  </div>
-                </motion.div>
+                  <p className="text-sm text-gray-500">Model accuracy: {typeof accuracy === 'number' ? `${accuracy}%` : '—'}</p>
+                </div>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="p-2 bg-orange-100 rounded-lg">
-                      <TrendingDown className="text-orange-600" size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Waste Reduction</p>
-                      <p className="text-2xl text-gray-800">{wasteReduction}%</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle className="text-green-600" size={14} />
-                    <span className="text-green-600">Excellent improvement</span>
-                  </div>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-3">
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-purple-100 rounded-lg">
-                      <Percent className="text-purple-600" size={20} />
+                      <DollarSign className="text-purple-600" size={20} />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Profit Increase</p>
-                      <p className="text-2xl text-gray-800">+{profitIncrease}%</p>
+                      <p className="text-sm text-gray-600">Projected Revenue (Optimal)</p>
+                      <p className="text-2xl text-gray-800">
+                        $
+                        {Number(
+                          result.scenarios?.optimal?.expectedRevenue ??
+                            (Number(optimalPrice ?? 0) * Number(formData.stockQuantity || 0))
+                        ).toFixed(2)}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-purple-600">vs current pricing</span>
-                  </div>
-                </motion.div>
+                  <p className="text-sm text-gray-500">
+                    Expected sales: {Number(result.scenarios?.optimal?.expectedSales ?? 0).toFixed(2)} units
+                  </p>
+                </div>
               </div>
 
-              {/* Price Scenarios Comparison */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-              >
-                <h3 className="text-gray-800 mb-4">Pricing Scenarios</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={priceScenarios}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="sales" fill="#3b82f6" name="Sales Units" />
-                    <Bar dataKey="revenue" fill="#10b981" name="Revenue ($)" />
-                    <Bar dataKey="waste" fill="#f59e0b" name="Waste (%)" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </motion.div>
+              {/* NEW: Forecast chart for first 5 days (recommendedPrice) */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-gray-800 mb-4">5-Day Recommended Price Forecast</h3>
+                {priceForecastData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={priceForecastData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="price" strokeWidth={3} dot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-gray-500">No forecast data returned by the model.</p>
+                )}
+              </div>
 
-              {/* Demand Forecast */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
-              >
-                <h3 className="text-gray-800 mb-4">7-Day Demand & Price Forecast</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={demandForecast}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="day" />
-                    <YAxis yAxisId="left" />
-                    <YAxis yAxisId="right" orientation="right" />
-                    <Tooltip />
-                    <Legend />
-                    <Line yAxisId="left" type="monotone" dataKey="demand" stroke="#8b5cf6" strokeWidth={2} name="Demand %" />
-                    <Line yAxisId="right" type="monotone" dataKey="price" stroke="#3b82f6" strokeWidth={2} name="Price ($)" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </motion.div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-gray-800 mb-4">Impact & Recommendation</h3>
 
-              {/* Recommendations */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 }}
-                className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-200 p-6"
-              >
-                <div className="flex items-center gap-2 mb-4">
-                  <CheckCircle className="text-green-600" size={24} />
-                  <h3 className="text-gray-800">AI Recommendations</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="p-4 bg-green-50 rounded-lg">
+                    <p className="text-xs text-gray-600">Profit Δ</p>
+                    <p className="text-xl font-semibold text-green-700">
+                      ${Number(impact?.profitIncrease ?? 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-blue-50 rounded-lg">
+                    <p className="text-xs text-gray-600">Revenue Δ</p>
+                    <p className="text-xl font-semibold text-blue-700">
+                      ${Number(impact?.revenueChange ?? 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-emerald-50 rounded-lg">
+                    <p className="text-xs text-gray-600">Sell-through</p>
+                    <p className="text-xl font-semibold text-emerald-700">
+                      {Number(impact?.sellThroughRate ?? 0).toFixed(2)}%
+                    </p>
+                  </div>
+                  <div className="p-4 bg-amber-50 rounded-lg">
+                    <p className="text-xs text-gray-600">Waste ↓</p>
+                    <p className="text-xl font-semibold text-amber-700">
+                      {Number(impact?.wasteReduction ?? 0).toFixed(2)}%
+                    </p>
+                  </div>
                 </div>
-                <ul className="space-y-3">
-                  <li className="flex items-start gap-3">
-                    <div className="p-1 bg-green-600 rounded-full mt-1">
-                      <CheckCircle className="text-white" size={12} />
-                    </div>
-                    <div>
-                      <p className="text-gray-800">Reduce price to ${predictedPrice.toFixed(2)} to maximize sales velocity</p>
-                      <p className="text-sm text-gray-600">This will increase demand by 92% and reduce waste significantly</p>
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <div className="p-1 bg-green-600 rounded-full mt-1">
-                      <CheckCircle className="text-white" size={12} />
-                    </div>
-                    <div>
-                      <p className="text-gray-800">Implement dynamic pricing over the next {formData.daysToExpiry} days</p>
-                      <p className="text-sm text-gray-600">Gradually decrease price as expiry approaches to maintain optimal turnover</p>
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <div className="p-1 bg-green-600 rounded-full mt-1">
-                      <CheckCircle className="text-white" size={12} />
-                    </div>
-                    <div>
-                      <p className="text-gray-800">Run promotional campaigns on Day 4-5 for maximum impact</p>
-                      <p className="text-sm text-gray-600">Predicted demand spike will help clear inventory before expiry</p>
-                    </div>
-                  </li>
-                </ul>
-              </motion.div>
+
+                <div className="mt-4 p-4 bg-gradient-to-br from-green-50 to-blue-50 rounded-xl border border-green-200">
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold">Reasoning:</span>{' '}
+                    {reasoning || 'Net Profit Optimized'}
+                  </p>
+                </div>
+              </div>
             </>
           )}
         </motion.div>

@@ -23,7 +23,8 @@ const AddProduct: React.FC = () => {
     mrp: '',
     stock: '',
     mfgDate: '',
-    expiryDate: ''
+    expiryDate: '',
+    mlProductId: '' // 👈 new: ML dataset product id
   });
 
   const [successMessage, setSuccessMessage] = useState('');
@@ -75,8 +76,8 @@ const AddProduct: React.FC = () => {
     if (!formData.stock || Number(formData.stock) < 0) return 'Valid stock quantity is required';
     if (!formData.mfgDate) return 'Manufacturing date is required';
     if (!formData.expiryDate) return 'Expiry date is required';
-    // ensure expiry > mfg
     if (new Date(formData.expiryDate) <= new Date(formData.mfgDate)) return 'Expiry date must be after manufacturing date';
+    if (!formData.mlProductId.trim()) return 'ML Product ID (from the model dataset) is required';
     return null;
   };
 
@@ -90,11 +91,9 @@ const AddProduct: React.FC = () => {
         return JSON.stringify(data.error || data.errors);
       }
     }
-
     if (err?.message && typeof err.message === 'string') {
       return err.message;
     }
-
     if (typeof err === 'string') return err;
     return 'Failed to add product';
   };
@@ -113,7 +112,6 @@ const AddProduct: React.FC = () => {
     setLoading(true);
 
     try {
-      console.log(e);
       const mrpNum = parseFloat(formData.mrp);
       const stockNum = Number(formData.stock);
 
@@ -123,7 +121,7 @@ const AddProduct: React.FC = () => {
         description: '',
 
         pricing: {
-          costPrice: Number((mrpNum * 0.4).toFixed(2)), 
+          costPrice: Number((mrpNum * 0.4).toFixed(2)),
           mrp: mrpNum,
           currentPrice: mrpNum
         },
@@ -139,7 +137,10 @@ const AddProduct: React.FC = () => {
           expiryDate: new Date(formData.expiryDate).toISOString()
         },
 
-        aiMetrics: {},
+        //  send ML dataset product id to backend for storage
+        aiMetrics: {
+          mlProductId: formData.mlProductId.trim()
+        },
         sales: {}
       };
 
@@ -157,7 +158,8 @@ const AddProduct: React.FC = () => {
         mrp: '',
         stock: '',
         mfgDate: '',
-        expiryDate: ''
+        expiryDate: '',
+        mlProductId: ''
       });
       setImagePreview(null);
       setImageFile(null);
@@ -170,7 +172,6 @@ const AddProduct: React.FC = () => {
       setLoading(false);
     }
   };
-
 
   return (
     <div className="max-w-6xl">
@@ -232,23 +233,58 @@ const AddProduct: React.FC = () => {
                   )}
                 </div>
 
+                {/* Name */}
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Product Name *</label>
                   <div className="relative">
                     <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input type="text" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., Fresh Organic Milk" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
+                    <input
+                      type="text"
+                      name="name"
+                      value={formData.name}
+                      onChange={handleChange}
+                      placeholder="e.g., Fresh Organic Milk"
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
                   </div>
                 </div>
 
+                {/* Category */}
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Category *</label>
                   <div className="relative">
                     <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={18} />
-                    <select name="category" value={formData.category} onChange={handleChange} required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none bg-white">
+                    <select
+                      name="category"
+                      value={formData.category}
+                      onChange={handleChange}
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none bg-white"
+                    >
                       <option value="">Select a category</option>
                       {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                   </div>
+                </div>
+
+                {/* ML Product ID */}
+                <div>
+                  <label className="block text-sm text-gray-700 mb-2">
+                    ML Product ID (from your model dataset) *
+                  </label>
+                  <input
+                    type="text"
+                    name="mlProductId"
+                    value={formData.mlProductId}
+                    onChange={handleChange}
+                    placeholder="e.g., P-00123"
+                    required
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    This must match the productId used in your ML training data so the optimizer can price it correctly.
+                  </p>
                 </div>
               </div>
             </div>
@@ -265,7 +301,16 @@ const AddProduct: React.FC = () => {
                   <label className="block text-sm text-gray-700 mb-2">Price (MRP) *</label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input type="number" step="0.01" name="mrp" value={formData.mrp} onChange={handleChange} placeholder="0.00" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
+                    <input
+                      type="number"
+                      step="0.01"
+                      name="mrp"
+                      value={formData.mrp}
+                      onChange={handleChange}
+                      placeholder="0.00"
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
                   </div>
                 </div>
 
@@ -273,7 +318,15 @@ const AddProduct: React.FC = () => {
                   <label className="block text-sm text-gray-700 mb-2">Stock Quantity *</label>
                   <div className="relative">
                     <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input type="number" name="stock" value={formData.stock} onChange={handleChange} placeholder="0" required className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
+                    <input
+                      type="number"
+                      name="stock"
+                      value={formData.stock}
+                      onChange={handleChange}
+                      placeholder="0"
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
                   </div>
                 </div>
               </div>
@@ -289,12 +342,26 @@ const AddProduct: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Manufacturing Date *</label>
-                  <input type="date" name="mfgDate" value={formData.mfgDate} onChange={handleChange} required className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
+                  <input
+                    type="date"
+                    name="mfgDate"
+                    value={formData.mfgDate}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
                 </div>
 
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Expiry Date *</label>
-                  <input type="date" name="expiryDate" value={formData.expiryDate} onChange={handleChange} required className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
+                  <input
+                    type="date"
+                    name="expiryDate"
+                    value={formData.expiryDate}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
                 </div>
               </div>
 
@@ -302,7 +369,9 @@ const AddProduct: React.FC = () => {
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Info className="text-blue-600" size={16} />
-                    <p className="text-sm text-blue-800">Shelf Life: <span className="font-semibold">{shelfLife} days</span></p>
+                    <p className="text-sm text-blue-800">
+                      Shelf Life: <span className="font-semibold">{shelfLife} days</span>
+                    </p>
                   </div>
                 </motion.div>
               )}
@@ -323,13 +392,25 @@ const AddProduct: React.FC = () => {
                   </>
                 )}
               </Button>
-              <button type="button" onClick={() => {
-                setFormData({ name: '', category: '', mrp: '', stock: '', mfgDate: '', expiryDate: '' });
-                setImagePreview(null);
-                setImageFile(null);
-                setSuccessMessage('');
-                setErrorMessage('');
-              }} className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({
+                    name: '',
+                    category: '',
+                    mrp: '',
+                    stock: '',
+                    mfgDate: '',
+                    expiryDate: '',
+                    mlProductId: ''
+                  });
+                  setImagePreview(null);
+                  setImageFile(null);
+                  setSuccessMessage('');
+                  setErrorMessage('');
+                }}
+                className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
                 Clear Form
               </button>
             </div>
@@ -365,6 +446,10 @@ const AddProduct: React.FC = () => {
                   <p className="text-gray-800">{formData.stock || '0'} units</p>
                 </div>
               </div>
+              <div>
+                <p className="text-xs text-gray-500">ML Product ID</p>
+                <p className="text-gray-800">{formData.mlProductId || 'Not set'}</p>
+              </div>
             </div>
           </div>
 
@@ -388,6 +473,12 @@ const AddProduct: React.FC = () => {
               <li className="flex items-start gap-2">
                 <CheckCircle className="text-green-600 flex-shrink-0 mt-0.5" size={16} />
                 <span>Always verify expiry dates for accuracy</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckCircle className="text-green-600 flex-shrink-0 mt-0.5" size={16} />
+                <span>
+                  Make sure <span className="font-semibold">ML Product ID</span> exactly matches the ID in your ML dataset.
+                </span>
               </li>
             </ul>
           </div>

@@ -12,4 +12,6 @@ router.put('/:id', isAuthenticated, upload.single('image'), productController.up
 router.delete('/:id', isAuthenticated, productController.deleteProduct);
 router.put('/:id/stock', isAuthenticated, productController.updateStock);
 
+router.post('/:id/optimize', isAuthenticated, productController.optimizePrice);
+
 module.exports = router;

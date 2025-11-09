@@ -72,6 +72,13 @@ const ProductSchema = new Schema(
         min: [0, 'Reorder level cannot be negative']
       }
     },
+    aiMetrics: {
+      mlProductId: { type: String, index: true }, // <-- ID used by the Flask model’s dataset
+      recommendedPrice: { type: Number },
+      confidenceScore: { type: Number },
+      modelVersion: { type: String },             // optional, handy for debugging
+      lastOptimizedAt: { type: Date }             // optional
+    },
     perishable: {
       manufactureDate: {
         type: Date,

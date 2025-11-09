@@ -3,6 +3,9 @@ const { z } = require('zod');
 const Product = require('../Models/Product');
 const cloudinary = require('../lib/cloudinary');
 const streamifier = require('streamifier');
+const axios = require('axios');
+
+const ML_API_URL = process.env.ML_API_URL || 'http://127.0.0.1:8000';
 
 const pricingSchema = z.object({
   costPrice: z.number().min(0),
@@ -24,6 +27,30 @@ const perishableSchema = z.object({
   daysToExpiry: z.number().optional()
 });
 
+const aiMetricsSchema = z
+  .object({
+    // 👇 allow but don’t require on create; optimizePrice will enforce it
+    mlProductId: z.string().min(1).optional(),
+    demandScore: z.number().min(0).max(100).optional(),
+    spoilageRisk: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    recommendedPrice: z.number().min(0).optional(),
+    confidenceScore: z.number().min(0).max(100).optional(),
+    modelVersion: z.string().optional(),
+    lastPredictionDate: z.preprocess((d) => (d ? new Date(d) : d), z.date()).optional(),
+    lastOptimizedAt: z.preprocess((d) => (d ? new Date(d) : d), z.date()).optional(),
+    lastOptimization: z.any().optional()
+  })
+  .optional();
+
+const salesSchema = z
+  .object({
+    totalSold: z.number().min(0).optional(),
+    totalRevenue: z.number().min(0).optional(),
+    averageDailySales: z.number().min(0).optional(),
+    lastSaleDate: z.preprocess((d) => (d ? new Date(d) : d), z.date()).optional()
+  })
+  .optional();
+
 const createProductSchema = z.object({
   storeId: z.string().optional(),
   sku: z.string().optional(),
@@ -34,22 +61,8 @@ const createProductSchema = z.object({
   pricing: pricingSchema,
   stock: stockSchema,
   perishable: perishableSchema,
-  aiMetrics: z
-    .object({
-      demandScore: z.number().min(0).max(100).optional(),
-      spoilageRisk: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-      recommendedPrice: z.number().min(0).optional(),
-      lastPredictionDate: z.preprocess((d) => (d ? new Date(d) : d), z.date()).optional()
-    })
-    .optional(),
-  sales: z
-    .object({
-      totalSold: z.number().min(0).optional(),
-      totalRevenue: z.number().min(0).optional(),
-      averageDailySales: z.number().min(0).optional(),
-      lastSaleDate: z.preprocess((d) => (d ? new Date(d) : d), z.date()).optional()
-    })
-    .optional(),
+  aiMetrics: aiMetricsSchema,
+  sales: salesSchema,
   status: z.enum(['active', 'low-stock', 'expiring-soon', 'expired', 'discontinued']).optional(),
   updatedBy: z.string().optional()
 });
@@ -98,7 +111,7 @@ const uploadBufferToCloudinary = async (buffer, folder = 'perishpro_products') =
   }
 };
 
-// listProducts
+// ===== LIST PRODUCTS
 const listProducts = async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
@@ -134,7 +147,7 @@ const listProducts = async (req, res) => {
   }
 };
 
-// getProduct
+// ===== GET PRODUCT
 const getProduct = async (req, res) => {
   try {
     const oid = req.params.id;
@@ -152,6 +165,7 @@ const getProduct = async (req, res) => {
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
+// ===== ADD PRODUCT
 const addProduct = async (req, res) => {
   try {
     // 1) Handle image upload (if any)
@@ -175,14 +189,13 @@ const addProduct = async (req, res) => {
     if (req.body && typeof req.body.data === 'string') {
       try {
         bodyToValidate = JSON.parse(req.body.data);
-        // merge image if upload happened
         if (req.body.image) bodyToValidate.image = req.body.image;
       } catch (e) {
         return res.status(400).json({ success: false, message: 'Invalid JSON in data field' });
       }
     }
 
-    // 3) Compute perishable.shelfLife and daysToExpiry if manufactureDate & expiryDate present
+    // 3) Compute perishable derived fields
     if (bodyToValidate.perishable) {
       try {
         const mfg = bodyToValidate.perishable.manufactureDate ? new Date(bodyToValidate.perishable.manufactureDate) : null;
@@ -196,7 +209,6 @@ const addProduct = async (req, res) => {
           bodyToValidate.perishable.daysToExpiry = daysToExpiry;
         }
       } catch (computeErr) {
-        // don't block creation for compute errors, just log
         console.warn('Failed to compute perishable derived fields', computeErr);
       }
     }
@@ -229,11 +241,7 @@ const addProduct = async (req, res) => {
   }
 };
 
-/**
- * updateProduct (updated)
- * - supports multipart/form-data with optional 'image'
- * - computes perishable.shelfLife & daysToExpiry if manufactureDate & expiryDate are present in body
- */
+// ===== UPDATE PRODUCT
 const updateProduct = async (req, res) => {
   try {
     const oid = req.params.id;
@@ -255,7 +263,7 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // 2) If client used form-data and sent JSON under 'data', parse it
+    // 2) Parse form-data 'data' JSON if sent
     let bodyToValidate = req.body;
     if (req.body && typeof req.body.data === 'string') {
       try {
@@ -266,7 +274,7 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // 3) Compute perishable shelfLife/daysToExpiry if perishable provided
+    // 3) Compute perishable derived fields if provided
     if (bodyToValidate.perishable) {
       try {
         const mfg = bodyToValidate.perishable.manufactureDate ? new Date(bodyToValidate.perishable.manufactureDate) : null;
@@ -294,7 +302,11 @@ const updateProduct = async (req, res) => {
     if (req.user && req.user._id) updates.updatedBy = req.user._id;
 
     // 5) Apply update
-    const updated = await Product.findByIdAndUpdate(oid, { $set: updates }, { new: true, runValidators: true, context: 'query' });
+    const updated = await Product.findByIdAndUpdate(
+      oid,
+      { $set: updates },
+      { new: true, runValidators: true, context: 'query' }
+    );
     if (!updated) return res.status(404).json({ success: false, message: 'Product not found' });
 
     return res.status(200).json({ success: true, message: 'Product updated', product: updated });
@@ -308,7 +320,7 @@ const updateProduct = async (req, res) => {
   }
 };
 
-// deleteProduct
+// ===== DELETE PRODUCT
 const deleteProduct = async (req, res) => {
   try {
     const oid = req.params.id;
@@ -330,7 +342,7 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-// updateStock
+// ===== UPDATE STOCK
 const updateStock = async (req, res) => {
   try {
     const oid = req.params.id;
@@ -357,11 +369,98 @@ const updateStock = async (req, res) => {
   }
 };
 
+// ===== OPTIMIZE PRICE (uses ML productId from aiMetrics)
+const optimizePrice = async (req, res) => {
+  try {
+    const mongoId = req.params.id;
+    const product = await Product.findById(mongoId);
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+
+    const mlProductId = product.aiMetrics?.mlProductId;
+    if (!mlProductId || typeof mlProductId !== 'string' || !mlProductId.trim()) {
+      return res.status(400).json({ success: false, message: 'ML Product ID not set for this item' });
+    }
+
+    if (!product.perishable?.expiryDate) {
+      return res.status(400).json({ success: false, message: 'Expiry date missing for this product' });
+    }
+
+    // Prefer precomputed daysToExpiry if present and sane; else compute fresh
+    let daysToExpiry = product.perishable?.daysToExpiry;
+    if (typeof daysToExpiry !== 'number' || daysToExpiry < 0) {
+      const today = new Date();
+      const expiry = new Date(product.perishable.expiryDate);
+      daysToExpiry = Math.ceil((expiry - today) / MS_PER_DAY);
+    }
+
+    if (daysToExpiry <= 0) {
+      return res.status(400).json({ success: false, message: 'Product already expired' });
+    }
+
+    const stockLevel = Number(product.stock?.quantity ?? 0);
+
+    const payload = {
+      productId: mlProductId,        // 👈 send ML product id (not Mongo id)
+      stockLevel: stockLevel,
+      daysToExpiry: daysToExpiry
+    };
+
+    // Call Flask ML API
+    const response = await axios.post(`${ML_API_URL}/predict`, payload, { timeout: 10000 });
+    const mlData = response.data || {};
+
+    const newPriceRaw = mlData?.recommendations?.optimalPrice;
+    const newPrice = Number.isFinite(newPriceRaw) ? Number(newPriceRaw) : NaN;
+    if (!Number.isFinite(newPrice)) {
+      return res.status(502).json({ success: false, message: 'ML failed to return a valid price' });
+    }
+
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const prevPrice = Number(product.pricing?.currentPrice ?? 0);
+
+    // Update DB fields
+    product.pricing.currentPrice = round2(newPrice);
+    product.aiMetrics = {
+      ...(product.aiMetrics || {}),
+      recommendedPrice: round2(newPrice),
+      confidenceScore: Number(mlData?.recommendations?.confidenceScore ?? 0),
+      modelVersion: String(mlData?.algorithm?.version || ''),
+      lastPredictionDate: mlData?.predictionDate ? new Date(mlData.predictionDate) : new Date(),
+      lastOptimizedAt: new Date(),
+      lastOptimization: mlData
+    };
+
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Price optimized successfully',
+      productId: mongoId,
+      mlProductId,
+      oldPrice: prevPrice,
+      newPrice: product.pricing.currentPrice,
+      mlSummary: {
+        confidence: product.aiMetrics.confidenceScore,
+        modelVersion: product.aiMetrics.modelVersion,
+        sellThroughRate: mlData?.impact?.sellThroughRate,
+        wasteReduction: mlData?.impact?.wasteReduction,
+      },
+      raw: mlData
+    });
+  } catch (error) {
+    console.error('ML Optimization Error:', error?.response?.data || error.message || error);
+    const status = error?.response?.status || 500;
+    const msg = error?.response?.data?.error || error?.response?.data?.message || error.message || 'Failed to optimize price';
+    res.status(status).json({ success: false, message: msg });
+  }
+};
+
 module.exports = {
   listProducts,
   getProduct,
   addProduct,
   updateProduct,
   deleteProduct,
-  updateStock
+  updateStock,
+  optimizePrice
 };

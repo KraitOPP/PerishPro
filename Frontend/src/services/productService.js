@@ -124,6 +124,16 @@ export const updateStock = async (id, opOrPayload, amount) => {
   }
 };
 
+ export const optimizeProduct = async (id) => {
+  try {
+    const response = await api.post(`/products/${id}/optimize`);
+    return response.data;
+  } catch (error) {
+    throw error?.response?.data?.message || 'Failed to optimize product';
+  }
+};
+
+
 export default {
   listProducts,
   getProduct,
@@ -131,4 +141,5 @@ export default {
   updateProduct,
   deleteProduct,
   updateStock,
+  optimizeProduct
 };

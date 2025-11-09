@@ -45,6 +45,8 @@ const safeNumber = (v: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const FLASK_URL = 'http://localhost:8000/predict';
+
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -62,6 +64,10 @@ const ProductDetail: React.FC = () => {
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
 
+  // Store last ML call result so we can show details in the modal
+  const [lastMlOptimal, setLastMlOptimal] = useState<number | null>(null);
+  const [lastMlConfidence, setLastMlConfidence] = useState<number | null>(null);
+
   const daysLeft = useMemo(() => {
     if (!product?.expiryDate) return 999;
     const today = new Date();
@@ -70,33 +76,20 @@ const ProductDetail: React.FC = () => {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }, [product?.expiryDate]);
 
-  // If server doesn't provide ML price, generate a temporary realistic recommendation
+  // Temporary fallback only if we have nothing from ML yet
   const computeTemporaryML = (p: ApiProduct | null) => {
     if (!p) return 0;
-    // Check if we have a valid ML price from the API
-    if (typeof p.mlPrice === 'number' && !isNaN(p.mlPrice) && p.mlPrice > 0) return p.mlPrice;
-    
-    // Temporary ML calculation until API provides recommendedPrice
+    if (typeof p.optimalPrice === 'number' && p.optimalPrice > 0) return p.optimalPrice;
+    if (typeof p.mlPrice === 'number' && p.mlPrice > 0) return p.mlPrice;
+
     const currentPrice = p.currentPrice ?? 0;
     const currentDaysLeft = daysLeft;
-    
-    // More aggressive discounting as expiry approaches
-    if (currentDaysLeft <= 1) {
-      // Last day: 40-50% off
-      return Number((currentPrice * 0.5).toFixed(2));
-    } else if (currentDaysLeft <= 3) {
-      // 2-3 days: 25-35% off
-      return Number((currentPrice * 0.7).toFixed(2));
-    } else if (currentDaysLeft <= 7) {
-      // 4-7 days: 15-20% off
-      return Number((currentPrice * 0.85).toFixed(2));
-    } else if (currentDaysLeft <= 14) {
-      // 8-14 days: 5-10% off
-      return Number((currentPrice * 0.92).toFixed(2));
-    } else {
-      // More than 14 days: 0-5% off
-      return Number((currentPrice * 0.97).toFixed(2));
-    }
+
+    if (currentDaysLeft <= 1) return Number((currentPrice * 0.5).toFixed(2));
+    else if (currentDaysLeft <= 3) return Number((currentPrice * 0.7).toFixed(2));
+    else if (currentDaysLeft <= 7) return Number((currentPrice * 0.85).toFixed(2));
+    else if (currentDaysLeft <= 14) return Number((currentPrice * 0.92).toFixed(2));
+    else return Number((currentPrice * 0.97).toFixed(2));
   };
 
   useEffect(() => {
@@ -137,6 +130,12 @@ const ProductDetail: React.FC = () => {
             const n = Number(v);
             return Number.isFinite(n) && n > 0 ? n : null;
           })(),
+          optimalPrice: ((): number | null => {
+            const v = p.aiMetrics?.optimalPrice ?? p.optimalPrice;
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : null;
+          })(),
+          aiMlProductId: p.aiMetrics?.mlProductId ?? p.aiMlProductId ?? p.ml_id ?? '', // try to pick ML id if present
           originalPrice: safeNumber(
             p.pricing?.mrp ?? p.originalPrice ?? p.pricing?.costPrice ?? 0,
             0
@@ -151,7 +150,7 @@ const ProductDetail: React.FC = () => {
 
         setProduct(normalized);
 
-        // histories: use API if present, else a quick fallback
+        // histories
         if (Array.isArray(p.priceHistory) && p.priceHistory.length > 0) {
           setPriceHistory(p.priceHistory);
         } else {
@@ -160,10 +159,7 @@ const ProductDetail: React.FC = () => {
             { date: '11-03', price: Math.round(normalized.originalPrice * 0.95 * 100) / 100 },
             { date: '11-05', price: normalized.currentPrice },
             { date: '11-07', price: Math.round(normalized.currentPrice * 0.88 * 100) / 100 },
-            {
-              date: normalized.expiryDate || 'exp',
-              price: normalized.mlPrice ?? normalized.currentPrice
-            }
+            { date: normalized.expiryDate || 'exp', price: normalized.mlPrice ?? normalized.currentPrice }
           ]);
         }
 
@@ -200,7 +196,7 @@ const ProductDetail: React.FC = () => {
   const calculateOptimizationImpact = () => {
     if (!product) return { profitIncrease: '0.00', wasteSaving: '0.00', sellThroughIncrease: '0%', revenueIncrease: '0.0' };
     const curr = safeNumber(product.currentPrice, 0);
-    const ml = product.mlPrice ?? computeTemporaryML(product);
+    const ml = (typeof product.optimalPrice === 'number' ? product.optimalPrice : (product.mlPrice ?? computeTemporaryML(product)));
     const expectedSalesIncrease = 0.35;
     const currentRevenue = curr * (product.stock ?? 0) * 0.6;
     const optimizedRevenue = ml * (product.stock ?? 0) * 0.95;
@@ -217,28 +213,74 @@ const ProductDetail: React.FC = () => {
 
   const impact = calculateOptimizationImpact();
 
+  // ---- Optimize: call localhost:8000/predict with { productId, stockLevel, daysToExpiry } ----
   const handleOptimize = async () => {
     if (!product || !product.id) return;
+
+    // pick productId for ML: prefer mlProductId, else fallback to product.id as string
+    const mlProductId = product.aiMlProductId || String(product.id);
+    const payload = {
+      productId: mlProductId,
+      stockLevel: Number(product.stock ?? 0),
+      daysToExpiry: Math.max(0, daysLeft)
+    };
+
     setLoadingAction(true);
     setErrorMessage('');
     try {
-      const ml = product.mlPrice ?? computeTemporaryML(product);
-      await productService.updateProduct(String(product.id), { 
-        pricing: { 
-          currentPrice: ml,
+      const resp = await fetch(FLASK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(text || `ML /predict failed with status ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      const optimal = data?.recommendations?.optimalPrice;
+      const confidence = data?.recommendations?.confidenceScore;
+
+      if (typeof optimal !== 'number' || Number.isNaN(optimal)) {
+        throw new Error('Invalid ML response: recommendations.optimalPrice missing');
+      }
+
+      // Persist to backend product
+      await productService.updateProduct(String(product.id), {
+        pricing: {
+          currentPrice: Number(optimal),
           costPrice: product.originalPrice,
           mrp: product.originalPrice
-        } 
+        },
+        aiMetrics: {
+          mlProductId: mlProductId,
+          optimalPrice: Number(optimal),
+          recommendedPrice: Number(optimal),
+          confidenceScore: typeof confidence === 'number' ? confidence : product.confidence
+        }
       });
-      
-      setProduct(prev => (prev ? { ...prev, currentPrice: ml } : prev));
-      setEditedPrice(ml);
+
+      // Update local UI
+      setProduct(prev => prev ? {
+        ...prev,
+        currentPrice: Number(optimal),
+        optimalPrice: Number(optimal),
+        mlPrice: Number(optimal),
+        confidence: typeof confidence === 'number' ? confidence : prev.confidence
+      } : prev);
+
+      setEditedPrice(Number(optimal));
+      setLastMlOptimal(Number(optimal));
+      setLastMlConfidence(typeof confidence === 'number' ? confidence : null);
+
       setSuccessMessage('Price optimized successfully');
       setTimeout(() => setSuccessMessage(''), 3000);
       setShowOptimizeModal(false);
     } catch (err: any) {
       console.error('Optimize failed', err);
-      const errorMsg = typeof err === 'string' ? err : (err?.response?.data?.message ?? err?.message ?? 'Failed to apply optimization');
+      const errorMsg = typeof err === 'string' ? err : (err?.message ?? 'Failed to apply optimization');
       setErrorMessage(errorMsg);
       setTimeout(() => setErrorMessage(''), 5000);
     } finally {
@@ -256,14 +298,14 @@ const ProductDetail: React.FC = () => {
     setLoadingAction(true);
     setErrorMessage('');
     try {
-      await productService.updateProduct(String(product.id), { 
-        pricing: { 
+      await productService.updateProduct(String(product.id), {
+        pricing: {
           currentPrice: Number(editedPrice),
           costPrice: product.originalPrice,
           mrp: product.originalPrice
-        } 
+        }
       });
-      
+
       setProduct(prev => (prev ? { ...prev, currentPrice: Number(editedPrice) } : prev));
       setSuccessMessage('Price updated successfully');
       setIsEditing(false);
@@ -326,6 +368,10 @@ const ProductDetail: React.FC = () => {
     );
   }
 
+  const mlRecommended = typeof product.optimalPrice === 'number'
+    ? product.optimalPrice
+    : (product.mlPrice ?? computeTemporaryML(product));
+
   return (
     <div className="space-y-6">
       {successMessage && <Alert message={successMessage} type="success" onClose={() => setSuccessMessage('')} />}
@@ -335,9 +381,9 @@ const ProductDetail: React.FC = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link to="/inventory">
-            <motion.button 
-              whileHover={{ scale: 1.05, x: -5 }} 
-              whileTap={{ scale: 0.95 }} 
+            <motion.button
+              whileHover={{ scale: 1.05, x: -5 }}
+              whileTap={{ scale: 0.95 }}
               className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
             >
               <ArrowLeft size={24} />
@@ -345,7 +391,9 @@ const ProductDetail: React.FC = () => {
           </Link>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">{product.name}</h1>
-            <p className="text-gray-600">SKU: {product.sku} • {product.category}</p>
+            <p className="text-gray-600">
+              SKU: {product.sku} • {product.category}
+            </p>
           </div>
         </div>
 
@@ -353,9 +401,9 @@ const ProductDetail: React.FC = () => {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => { 
-              setIsEditing(!isEditing); 
-              setEditedPrice(product.currentPrice); 
+            onClick={() => {
+              setIsEditing(!isEditing);
+              setEditedPrice(product.currentPrice);
             }}
             className="px-4 py-2 border border-gray-200 rounded-xl font-medium hover:bg-gray-50 flex items-center gap-2"
           >
@@ -375,9 +423,9 @@ const ProductDetail: React.FC = () => {
 
       {/* Status Banner */}
       {(product.status === 'critical' || daysLeft <= 3) && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }} 
-          animate={{ opacity: 1, y: 0 }} 
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
           className="bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-2xl p-6 shadow-lg"
         >
           <div className="flex items-start justify-between">
@@ -388,7 +436,7 @@ const ProductDetail: React.FC = () => {
               <div>
                 <h3 className="text-xl font-bold mb-2">Immediate Action Required!</h3>
                 <p className="text-red-50 mb-4">
-                  This product expires in {daysLeft} day{daysLeft !== 1 ? 's' : ''}. 
+                  This product expires in {daysLeft} day{daysLeft !== 1 ? 's' : ''}.
                   Optimizing the price now could save ${impact.wasteSaving} in waste and increase revenue by {impact.revenueIncrease}%.
                 </p>
                 <div className="flex items-center gap-4">
@@ -404,10 +452,10 @@ const ProductDetail: React.FC = () => {
               </div>
             </div>
 
-            <motion.button 
-              whileHover={{ scale: 1.05 }} 
-              whileTap={{ scale: 0.95 }} 
-              onClick={() => setShowOptimizeModal(true)} 
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowOptimizeModal(true)}
               className="px-6 py-3 bg-white text-red-600 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
             >
               <Zap size={20} /> Optimize Now
@@ -435,16 +483,16 @@ const ProductDetail: React.FC = () => {
                 <p className="text-sm text-blue-600 mb-1">Current Price</p>
                 {isEditing ? (
                   <div className="flex items-center gap-2">
-                    <input 
-                      type="number" 
-                      step="0.01" 
-                      value={editedPrice} 
-                      onChange={(e) => setEditedPrice(Number(e.target.value))} 
-                      className="w-32 px-2 py-1 border border-blue-300 rounded-lg text-xl font-bold" 
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editedPrice}
+                      onChange={(e) => setEditedPrice(Number(e.target.value))}
+                      className="w-32 px-2 py-1 border border-blue-300 rounded-lg text-xl font-bold"
                     />
-                    <button 
-                      onClick={handleSavePrice} 
-                      disabled={loadingAction} 
+                    <button
+                      onClick={handleSavePrice}
+                      disabled={loadingAction}
                       className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
                       <Save size={16} />
@@ -462,16 +510,18 @@ const ProductDetail: React.FC = () => {
                   <Sparkles size={14} /> ML Recommended
                 </p>
                 <p className="text-2xl font-bold text-green-600">
-                  ${(product.mlPrice ?? computeTemporaryML(product)).toFixed(2)}
+                  ${mlRecommended.toFixed(2)}
                 </p>
-                <p className="text-xs text-green-700 mt-1">{product.confidence}% confidence</p>
+                <p className="text-xs text-green-700 mt-1">
+                  {(lastMlConfidence ?? product.confidence) ?? 0}% confidence
+                </p>
               </div>
             </div>
 
-            {Math.abs(product.currentPrice - (product.mlPrice ?? computeTemporaryML(product))) > 0.01 && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }} 
-                animate={{ opacity: 1, height: 'auto' }} 
+            {Math.abs(product.currentPrice - mlRecommended) > 0.01 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
                 className="p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-xl border border-green-200"
               >
                 <div className="flex items-center gap-2 mb-3">
@@ -496,11 +546,11 @@ const ProductDetail: React.FC = () => {
                     <p className="text-xl font-bold text-orange-600">+{impact.revenueIncrease}%</p>
                   </div>
                 </div>
-                <motion.button 
-                  whileHover={{ scale: 1.02 }} 
-                  whileTap={{ scale: 0.98 }} 
-                  onClick={() => setShowOptimizeModal(true)} 
-                  disabled={loadingAction} 
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowOptimizeModal(true)}
+                  disabled={loadingAction}
                   className="mt-4 w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Zap size={20} /> Apply ML Optimization
@@ -517,12 +567,12 @@ const ProductDetail: React.FC = () => {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" stroke="#9ca3af" />
                 <YAxis stroke="#9ca3af" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'rgba(255,255,255,0.95)', 
-                    border: '1px solid #e5e7eb', 
-                    borderRadius: '12px' 
-                  }} 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255,255,255,0.95)',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px'
+                  }}
                 />
                 <Line type="monotone" dataKey="price" stroke="#3b82f6" strokeWidth={3} dot={{ r: 5 }} />
               </LineChart>
@@ -537,12 +587,12 @@ const ProductDetail: React.FC = () => {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="date" stroke="#9ca3af" />
                 <YAxis stroke="#9ca3af" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'rgba(255,255,255,0.95)', 
-                    border: '1px solid #e5e7eb', 
-                    borderRadius: '12px' 
-                  }} 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255,255,255,0.95)',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px'
+                  }}
                 />
                 <Line type="monotone" dataKey="sold" stroke="#22c55e" strokeWidth={3} dot={{ r: 5 }} />
               </LineChart>
@@ -605,10 +655,10 @@ const ProductDetail: React.FC = () => {
               <p className="text-sm text-gray-600 mt-1">units available</p>
             </div>
             <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-              <motion.div 
-                initial={{ width: 0 }} 
-                animate={{ width: `${Math.min(100, ((product.stock ?? 0) / 160) * 100)}%` }} 
-                className="h-full bg-gradient-to-r from-blue-500 to-purple-500" 
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(100, ((product.stock ?? 0) / 160) * 100)}%` }}
+                className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
               />
             </div>
             <p className="text-xs text-gray-500 mt-2 text-center">
@@ -620,22 +670,22 @@ const ProductDetail: React.FC = () => {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Status</h3>
             <div className="space-y-3">
               <div className={`p-3 rounded-xl border ${
-                daysLeft <= 2 
-                  ? 'bg-red-50 border-red-200' 
-                  : daysLeft <= 7 
-                  ? 'bg-yellow-50 border-yellow-200' 
+                daysLeft <= 2
+                  ? 'bg-red-50 border-red-200'
+                  : daysLeft <= 7
+                  ? 'bg-yellow-50 border-yellow-200'
                   : 'bg-green-50 border-green-200'
               }`}>
                 <div className="flex items-center gap-2 mb-1">
-                  <AlertTriangle 
-                    size={16} 
+                  <AlertTriangle
+                    size={16}
                     className={
-                      daysLeft <= 2 
-                        ? 'text-red-600' 
-                        : daysLeft <= 7 
-                        ? 'text-yellow-600' 
+                      daysLeft <= 2
+                        ? 'text-red-600'
+                        : daysLeft <= 7
+                        ? 'text-yellow-600'
                         : 'text-green-600'
-                    } 
+                    }
                   />
                   <span className="font-semibold text-gray-900">
                     {daysLeft <= 2 ? 'Critical' : daysLeft <= 7 ? 'Warning' : 'Good'}
@@ -651,7 +701,9 @@ const ProductDetail: React.FC = () => {
                   <Sparkles size={16} className="text-blue-600" />
                   <span className="font-semibold text-gray-900">ML Confidence</span>
                 </div>
-                <p className="text-2xl font-bold text-blue-600">{product.confidence}%</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {(lastMlConfidence ?? product.confidence) ?? 0}%
+                </p>
               </div>
             </div>
           </div>
@@ -659,9 +711,9 @@ const ProductDetail: React.FC = () => {
       </div>
 
       {/* Optimize Modal */}
-      <Modal 
-        isOpen={showOptimizeModal} 
-        onClose={() => setShowOptimizeModal(false)} 
+      <Modal
+        isOpen={showOptimizeModal}
+        onClose={() => setShowOptimizeModal(false)}
         title="Optimize Product Price"
       >
         <div className="space-y-4">
@@ -675,13 +727,17 @@ const ProductDetail: React.FC = () => {
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">New Price:</span>
                 <span className="font-bold text-green-600">
-                  ${(product.mlPrice ?? computeTemporaryML(product)).toFixed(2)}
+                  ${(
+                    (lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product))
+                  ).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">Price Change:</span>
                 <span className="font-bold text-red-600">
-                  -${((product.currentPrice ?? 0) - (product.mlPrice ?? computeTemporaryML(product))).toFixed(2)}
+                  -${(
+                    (product.currentPrice ?? 0) - (lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product))
+                  ).toFixed(2)}
                 </span>
               </div>
             </div>
@@ -710,20 +766,20 @@ const ProductDetail: React.FC = () => {
           </div>
 
           <div className="flex gap-3">
-            <Button 
-              type="button" 
-              variant="primary" 
-              onClick={handleOptimize} 
-              className="flex-1 bg-gradient-to-r from-green-600 to-blue-600" 
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleOptimize}
+              className="flex-1 bg-gradient-to-r from-green-600 to-blue-600"
               disabled={loadingAction}
             >
               <span className="flex items-center justify-center gap-2">
                 <Zap size={18} /> Apply ML Optimization
               </span>
             </Button>
-            <Button 
-              type="button" 
-              variant="secondary" 
+            <Button
+              type="button"
+              variant="secondary"
               onClick={() => setShowOptimizeModal(false)}
             >
               Cancel
@@ -733,32 +789,32 @@ const ProductDetail: React.FC = () => {
       </Modal>
 
       {/* Delete Modal */}
-      <Modal 
-        isOpen={showDeleteModal} 
-        onClose={() => setShowDeleteModal(false)} 
+      <Modal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
         title="Delete Product"
       >
         <div className="space-y-4">
           <div className="p-4 bg-red-50 rounded-xl border border-red-200">
             <p className="text-red-900">
-              Are you sure you want to delete <span className="font-bold">{product.name}</span>? 
+              Are you sure you want to delete <span className="font-bold">{product.name}</span>?
               This action cannot be undone.
             </p>
           </div>
 
           <div className="flex gap-3">
-            <Button 
-              type="button" 
-              variant="danger" 
-              onClick={handleDelete} 
-              className="flex-1" 
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleDelete}
+              className="flex-1"
               disabled={loadingAction}
             >
               {loadingAction ? 'Deleting...' : 'Delete Product'}
             </Button>
-            <Button 
-              type="button" 
-              variant="secondary" 
+            <Button
+              type="button"
+              variant="secondary"
               onClick={() => setShowDeleteModal(false)}
             >
               Cancel
