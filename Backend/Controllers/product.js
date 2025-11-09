@@ -319,28 +319,47 @@ const updateProduct = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to update product' });
   }
 };
+// Delete Product (soft delete by default; hard delete if ?force=true)
+const handleDeleteProduct = async () => {
+  if (!selectedProduct) return;
+  const id = selectedProduct._id ?? selectedProduct.id;
+  if (!id) return;
 
-// ===== DELETE PRODUCT
-const deleteProduct = async (req, res) => {
+  setActionLoading(true);
+  setErrorMessage('');
+
   try {
-    const oid = req.params.id;
-    const force = req.query.force === 'true';
-    if (!oid) return res.status(400).json({ success: false, message: 'Invalid product id' });
+    console.debug('Deleting id:', id);
 
-    if (force) {
-      const removed = await Product.findByIdAndDelete(oid);
-      if (!removed) return res.status(404).json({ success: false, message: 'Product not found' });
-      return res.status(200).json({ success: true, message: 'Product permanently deleted' });
+    // Request hard delete (force=true)
+    const resp = await productService.deleteProduct(String(id), { force: true });
+
+    console.debug('DELETE response:', resp);
+
+    if (resp && resp.success) {
+      // remove from UI only after server confirms deletion
+      setProducts(prev => prev.filter(p => (p._id ?? p.id) !== id));
+      setSuccessMessage(`${selectedProduct.name} permanently deleted`);
+      setTimeout(() => setSuccessMessage(''), 3000);
+      setIsDeleteModalOpen(false);
+    } else {
+      // backend returned something unexpected
+      const msg = resp?.message || 'Delete failed';
+      setErrorMessage(msg);
+      setTimeout(() => setErrorMessage(''), 5000);
     }
-
-    const updated = await Product.findByIdAndUpdate(oid, { status: 'discontinued' }, { new: true });
-    if (!updated) return res.status(404).json({ success: false, message: 'Product not found' });
-    return res.status(200).json({ success: true, message: 'Product discontinued (soft deleted)', product: updated });
-  } catch (err) {
-    console.error('deleteProduct error', err);
-    return res.status(500).json({ success: false, message: 'Failed to delete product' });
+  } catch (err: any) {
+    const errorMsg = typeof err === 'string'
+      ? err
+      : (err?.response?.data?.message ?? err?.message ?? 'Failed to delete product');
+    setErrorMessage(errorMsg);
+    setTimeout(() => setErrorMessage(''), 5000);
+    console.error('deleteProduct error (frontend):', err);
+  } finally {
+    setActionLoading(false);
   }
 };
+
 
 // ===== UPDATE STOCK
 const updateStock = async (req, res) => {
@@ -416,13 +435,45 @@ const optimizePrice = async (req, res) => {
     }
 
     const round2 = (n) => Math.round(n * 100) / 100;
-    const prevPrice = Number(product.pricing?.currentPrice ?? 0);
+    const prevPriceRaw = Number(product.pricing?.currentPrice ?? 0);
+    const prevPrice = Number.isFinite(prevPriceRaw) ? round2(prevPriceRaw) : 0;
+    const roundedNew = round2(newPrice);
 
-    // Update DB fields
-    product.pricing.currentPrice = round2(newPrice);
+    // --- NEW: store previous price + push a small history entry ---
+    product.pricing = product.pricing || {};
+    // only set previousPrice if it's different (keeps it cleaner)
+    if (prevPrice !== roundedNew) {
+      product.pricing.previousPrice = prevPrice;
+
+      product.pricing.priceHistory = Array.isArray(product.pricing.priceHistory)
+        ? product.pricing.priceHistory
+        : [];
+
+      // push new history entry at the front (unshift)
+      product.pricing.priceHistory.unshift({
+        price: prevPrice,
+        changedAt: new Date(),
+        reason: 'ml_optimize',
+        meta: {
+          mlProductId,
+          daysToExpiry,
+          stockLevel
+        }
+      });
+
+      // optional: keep only last N history entries to avoid unbounded growth
+      const MAX_HISTORY = 20;
+      if (product.pricing.priceHistory.length > MAX_HISTORY) {
+        product.pricing.priceHistory = product.pricing.priceHistory.slice(0, MAX_HISTORY);
+      }
+    }
+    // ----------------------------------------------------------
+
+    // Update DB fields with new ML price and metadata
+    product.pricing.currentPrice = roundedNew;
     product.aiMetrics = {
       ...(product.aiMetrics || {}),
-      recommendedPrice: round2(newPrice),
+      recommendedPrice: roundedNew,
       confidenceScore: Number(mlData?.recommendations?.confidenceScore ?? 0),
       modelVersion: String(mlData?.algorithm?.version || ''),
       lastPredictionDate: mlData?.predictionDate ? new Date(mlData.predictionDate) : new Date(),
@@ -454,6 +505,7 @@ const optimizePrice = async (req, res) => {
     res.status(status).json({ success: false, message: msg });
   }
 };
+
 
 module.exports = {
   listProducts,

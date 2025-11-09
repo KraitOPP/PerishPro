@@ -79,6 +79,24 @@ const ProductSchema = new Schema(
       modelVersion: { type: String },             // optional, handy for debugging
       lastOptimizedAt: { type: Date }             // optional
     },
+
+    pricing: {
+    currentPrice: { type: Number, default: 0 },
+    mrp: { type: Number, default: 0 },
+    costPrice: { type: Number, default: 0 },
+    previousPrice: { type: Number, default: null },        // store the immediate previous price
+    // optional history for audit
+    priceHistory: [
+      {
+        price: Number,
+        changedAt: { type: Date, default: Date.now },
+        reason: String, // e.g. 'ml_optimize'
+        user: String
+      }
+    ]
+  },
+  // ...
+});
     perishable: {
       manufactureDate: {
         type: Date,

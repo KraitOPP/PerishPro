@@ -1,3 +1,4 @@
+// src/pages/Inventory.tsx
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -24,9 +25,9 @@ type ProductItem = {
   status: 'critical' | 'warning' | 'good' | string;
   confidence?: number;
   pricing?: { currentPrice?: number; mrp?: number; costPrice?: number };
-  aiMlProductId?: string;         // ML dataset id you want the user to enter
-  mlPrice?: number | null;        // last applied ML price
-  optimalPrice?: number | null;   // last optimal price from /predict
+  aiMlProductId?: string;
+  mlPrice?: number | null;
+  optimalPrice?: number | null;
 };
 
 const DEFAULT_LOCAL_PRODUCTS: ProductItem[] = [
@@ -37,8 +38,9 @@ const DEFAULT_LOCAL_PRODUCTS: ProductItem[] = [
   { id: 5, name: 'Bananas', category: 'Produce', expiryDate: '2024-11-12', currentPrice: 1.99, originalPrice: 2.49, mlPrice: null, stock: 75, status: 'good', confidence: 89 }
 ];
 
-// Point to your Flask API
 const FLASK_BASE = (import.meta as any)?.env?.VITE_ML_API_URL || 'http://localhost:8000/predict';
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 const InventoryPage: React.FC = () => {
   const [products, setProducts] = useState<ProductItem[]>(DEFAULT_LOCAL_PRODUCTS);
@@ -72,6 +74,7 @@ const InventoryPage: React.FC = () => {
       try {
         const resp = await productService.listProducts({ limit: 200 });
         if (!mounted) return;
+
         if (resp && Array.isArray(resp.products)) {
           const normalized: ProductItem[] = resp.products.map((p: any, idx: number) => ({
             _id: p._id || p.id || undefined,
@@ -91,7 +94,10 @@ const InventoryPage: React.FC = () => {
             optimalPrice: p.aiMetrics?.optimalPrice ?? null,
             pricing: p.pricing ?? undefined
           }));
-          setProducts(normalized);
+
+          // If backend uses "discontinued" as soft-delete, filter those out for the UI list
+          const visible = normalized.filter(x => (x.status ?? '').toString().toLowerCase() !== 'discontinued');
+          setProducts(visible);
         }
       } catch (err) {
         console.warn('Failed to fetch products, using local defaults', err);
@@ -106,7 +112,7 @@ const InventoryPage: React.FC = () => {
   const calcDaysToExpiry = (expiryDate: string) => {
     if (!expiryDate) return 0;
     const ms = new Date(expiryDate).getTime() - Date.now();
-    return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+    return Math.max(0, Math.ceil(ms / MS_PER_DAY));
   };
 
   const isExpiringSoon = (expiryDate: string) => calcDaysToExpiry(expiryDate) <= 3;
@@ -122,8 +128,6 @@ const InventoryPage: React.FC = () => {
     const matchesStatus = selectedStatus === 'all' || product.status === selectedStatus;
     return matchesSearch && matchesCategory && matchesStatus;
   });
-
-  // const computeTemporaryML = (p: ProductItem) => Number((p.currentPrice * 0.9).toFixed(2)); // Fallback disabled
 
   const optimisticUpdateLocal = (id: string | number, patch: Partial<ProductItem>) => {
     setProducts(prev => prev.map(p => (p._id === id || p.id === id ? { ...p, ...patch } : p)));
@@ -184,26 +188,43 @@ const InventoryPage: React.FC = () => {
     }
   };
 
-  const handleOpenDeleteModal = (product: ProductItem) => {
+  // open delete modal and set the selected product
+  const openDeleteModalFor = (product: ProductItem) => {
     setSelectedProduct(product);
     setIsDeleteModalOpen(true);
   };
 
+  // IMPORTANT: using force: true to request a permanent delete from server (backend supports ?force=true)
   const handleDeleteProduct = async () => {
-    if (!selectedProduct) return;
-    const id = selectedProduct._id ?? selectedProduct.id;
-    if (!id) return;
+    if (!selectedProduct) {
+      setErrorMessage('No product selected to delete');
+      setTimeout(() => setErrorMessage(''), 3000);
+      return;
+    }
+
+    const mongoId = selectedProduct._id ?? selectedProduct.id;
+    if (!mongoId) {
+      setErrorMessage('Product id missing');
+      setTimeout(() => setErrorMessage(''), 3000);
+      return;
+    }
 
     setActionLoading(true);
     setErrorMessage('');
 
     try {
-      await productService.deleteProduct(String(id), { force: false });
-      setProducts(prev => prev.filter(p => (p._id !== id && p.id !== id)));
-      setSuccessMessage(`${selectedProduct.name} deleted successfully`);
+      // call delete with force:true so backend performs hard delete
+      const res = await productService.deleteProduct(String(mongoId), { force: true });
+      console.log('DELETE response:', res);
+
+      // Remove locally after successful server response
+      setProducts(prev => prev.filter(p => (p._id !== mongoId && p.id !== mongoId)));
+      setSuccessMessage(`${selectedProduct.name} deleted permanently`);
       setTimeout(() => setSuccessMessage(''), 3000);
       setIsDeleteModalOpen(false);
+      setSelectedProduct(null);
     } catch (err: any) {
+      console.error('Delete failed:', err);
       const errorMsg = typeof err === 'string'
         ? err
         : (err?.response?.data?.message ?? err?.message ?? 'Failed to delete product');
@@ -214,7 +235,6 @@ const InventoryPage: React.FC = () => {
     }
   };
 
-  // ---- ML OPTIMIZE via Flask /predict (extract recommendations.optimalPrice) ----
   const extractOptimalPrice = (res: any): number | null => {
     const v = res?.recommendations?.optimalPrice;
     return (typeof v === 'number' && !Number.isNaN(v)) ? v : null;
@@ -319,7 +339,7 @@ const InventoryPage: React.FC = () => {
             currentPrice: Number(p.currentPrice ?? 0)
           };
 
-          const resp = await fetch(`${FLASK_BASE}/predict`, {
+          const resp = await fetch(`${FLASK_BASE}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -386,15 +406,26 @@ const InventoryPage: React.FC = () => {
     );
   };
 
-  const stats = {
-    total: products.length,
-    critical: products.filter(p => p.status === 'critical').length,
-    needsOptimization: products.filter(p =>
-      typeof p.optimalPrice === 'number' &&
-      Math.abs((p.currentPrice ?? 0) - (p.optimalPrice ?? 0)) > 0.001
-    ).length,
-    totalValue: products.reduce((sum, p) => sum + ((p.currentPrice ?? 0) * (p.stock ?? 0)), 0)
-  };
+  // ---- Updated stats logic ----
+  const stats = (() => {
+    const total = products.length;
+
+    // critical = number of items expiring soon (red expiry)
+    const critical = products.filter(p => isExpiringSoon(p.expiryDate)).length;
+
+    // needsOptimization = items where ML optimal different from current OR expiring soon
+    const needsOptimization = products.filter(p => {
+      const mlOpt = (typeof p.optimalPrice === 'number' ? p.optimalPrice :
+                     typeof p.mlPrice === 'number' ? p.mlPrice : null);
+      const differs = (typeof mlOpt === 'number') && Math.abs((p.currentPrice ?? 0) - mlOpt) > 0.001;
+      const expiring = isExpiringSoon(p.expiryDate);
+      return differs || expiring;
+    }).length;
+
+    const totalValue = products.reduce((sum, p) => sum + ((p.currentPrice ?? 0) * (p.stock ?? 0)), 0);
+
+    return { total, critical, needsOptimization, totalValue };
+  })();
 
   return (
     <div className="space-y-6">
@@ -406,6 +437,7 @@ const InventoryPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <motion.button
+            type="button"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="px-4 py-2 border border-gray-200 rounded-xl font-medium hover:bg-gray-50 flex items-center gap-2"
@@ -413,6 +445,7 @@ const InventoryPage: React.FC = () => {
             <Download size={18} /> Export
           </motion.button>
           <motion.button
+            type="button"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="px-4 py-2 border border-gray-200 rounded-xl font-medium hover:bg-gray-50 flex items-center gap-2"
@@ -487,6 +520,7 @@ const InventoryPage: React.FC = () => {
             />
           </div>
           <button
+            type="button"
             onClick={() => setShowFilters(!showFilters)}
             className="px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-2"
           >
@@ -547,12 +581,14 @@ const InventoryPage: React.FC = () => {
           </span>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={handleBatchOptimize}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
             >
               <Sparkles size={16} /> Optimize Prices
             </button>
             <button
+              type="button"
               onClick={() => setSelectedItems([])}
               className="px-4 py-2 bg-white border border-gray-200 rounded-lg font-medium hover:bg-gray-50"
             >
@@ -673,33 +709,38 @@ const InventoryPage: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <Link to={`/product/${idKey}`}>
                           <motion.button
+                            type="button"
                             whileHover={{ scale: 1.1 }}
                             whileTap={{ scale: 0.9 }}
                             className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg"
                             title="View Details"
+                            aria-label={`View ${product.name}`}
                           >
                             <Eye size={16} />
                           </motion.button>
                         </Link>
 
                         <motion.button
+                          type="button"
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
                           onClick={() => handleOpenEditModal(product)}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
                           title="Edit Product"
+                          aria-label={`Edit ${product.name}`}
                         >
                           <Edit size={16} />
                         </motion.button>
 
-                        {/* Optimize via direct Flask /predict */}
                         <motion.button
+                          type="button"
                           whileHover={{ scale: hasMlId ? 1.1 : 1.0 }}
                           whileTap={{ scale: hasMlId ? 0.9 : 1.0 }}
                           onClick={() => hasMlId ? handleOptimizeProduct(product) : undefined}
                           className={`p-2 rounded-lg ${hasMlId ? 'text-green-700 hover:bg-green-50' : 'text-gray-400 cursor-not-allowed'}`}
                           title={hasMlId ? (isThisOptimizing ? 'Optimizing...' : 'AI Optimize & Apply') : 'Add ML Product ID to enable optimization'}
                           disabled={!!optimizing || !hasMlId}
+                          aria-label={hasMlId ? `Optimize ${product.name}` : `Missing ML ID for ${product.name}`}
                         >
                           {isThisOptimizing
                             ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-700 mx-auto" />
@@ -707,11 +748,14 @@ const InventoryPage: React.FC = () => {
                         </motion.button>
 
                         <motion.button
+                          type="button"
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
-                          onClick={() => handleOpenDeleteModal(product)}
+                          onClick={() => openDeleteModalFor(product)}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
                           title="Delete Product"
+                          aria-label={`Delete ${product.name}`}
+                          disabled={actionLoading}
                         >
                           <Trash2 size={16} />
                         </motion.button>
@@ -747,7 +791,6 @@ const InventoryPage: React.FC = () => {
       >
         {selectedProduct && (
           <div className="space-y-5">
-            {/* Product Preview Card */}
             <div className="p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-200">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-lg">
@@ -788,7 +831,6 @@ const InventoryPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Edit Form */}
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -902,11 +944,11 @@ const InventoryPage: React.FC = () => {
                 <div className="flex-1">
                   <h4 className="font-bold text-red-900 text-lg mb-2">Confirm Deletion</h4>
                   <p className="text-red-800 text-sm leading-relaxed">
-                    Are you sure you want to delete{' '}
+                    Are you sure you want to permanently delete{' '}
                     <span className="font-bold">{selectedProduct.name}</span>?
                   </p>
                   <p className="text-red-700 text-sm mt-2 leading-relaxed">
-                    This will mark the product as discontinued. This action can be reversed by updating the product status.
+                    This action cannot be undone.
                   </p>
                 </div>
               </div>
