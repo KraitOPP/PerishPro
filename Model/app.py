@@ -239,7 +239,7 @@ def predict():
             days_left=days_left,
             current_discount=0.0 # Assuming current discount is 0%
         )
-        
+        print(prediction_output)
         return jsonify(prediction_output)
         
     except KeyError as e:
