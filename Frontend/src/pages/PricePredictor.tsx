@@ -179,7 +179,7 @@ const PricePredictor: React.FC = () => {
                     placeholder="e.g. 38-732-7667"
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Must match the ID used in the ML dataset.</p>
+                {/* <p className="text-xs text-gray-500 mt-1">Must match the ID used in the ML dataset.</p> */}
               </div>
 
               <div>
@@ -251,21 +251,9 @@ const PricePredictor: React.FC = () => {
               </div>
 
               {/* UX-only fields */}
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Current Demand</label>
-                <select
-                  name="currentDemand"
-                  value={formData.currentDemand}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </div>
+              
 
-              <div>
+              {/* <div>
                 <label className="block text-sm text-gray-700 mb-2">Target Profit Margin (%)</label>
                 <div className="relative">
                   <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -277,7 +265,7 @@ const PricePredictor: React.FC = () => {
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   />
                 </div>
-              </div>
+              </div> */}
             </div>
 
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="mt-6">
