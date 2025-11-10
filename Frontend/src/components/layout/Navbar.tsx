@@ -57,7 +57,7 @@ const Navbar: React.FC = () => {
           </Link>
           
           {/* Search Bar */}
-          <div className="hidden md:flex items-center flex-1 max-w-xl">
+          {/* <div className="hidden md:flex items-center flex-1 max-w-xl">
             <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
@@ -66,7 +66,7 @@ const Navbar: React.FC = () => {
                 className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 hover:bg-white transition-colors"
               />
             </div>
-          </div>
+          </div> */}
         </div>
         
         {/* Right side actions */}

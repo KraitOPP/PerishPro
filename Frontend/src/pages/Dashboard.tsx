@@ -1,4 +1,3 @@
-// src/pages/Dashboard.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -10,7 +9,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
-import { listProducts } from '../services/productService';
+import { listProducts } from '../services/productService'; // Assuming this service exists and works
 
 const StatCard = ({ title, value, change, icon: Icon, color, trend }: any) => {
   const colorClasses: any = {
@@ -73,6 +72,7 @@ const chartData = [
   { date: 'Sun', profit: 2200, revenue: 5400 }
 ];
 
+// --- MODIFICATION 1: Update ApiProduct type ---
 type ApiProduct = {
   _id?: string;
   name?: string;
@@ -82,8 +82,16 @@ type ApiProduct = {
   stock?: { quantity?: number };
   perishable?: { expiryDate?: string };
   pricing?: { currentPrice?: number; mrp?: number; previousPrice?: number };
-  aiMetrics?: { recommendedPrice?: number; confidenceScore?: number; mlProductId?: string };
+  aiMetrics?: { 
+    recommendedPrice?: number; 
+    confidenceScore?: number; 
+    mlProductId?: string;
+    // Add the new fields
+    projectedWasteValue?: number;
+    optimizedWasteValue?: number;
+  };
 };
+// ------------------------------------------
 
 const PIE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#64748b'];
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -116,7 +124,26 @@ const Dashboard: React.FC = () => {
 
   const totalProducts = products.length;
 
+  // --- MODIFICATION 2: Add calculation for Total Waste Saved ---
+  const totalWasteSaved = useMemo(() => {
+    let totalSaved = 0;
+    for (const p of products) {
+      if (p.aiMetrics) {
+        const projected = p.aiMetrics.projectedWasteValue;
+        const optimized = p.aiMetrics.optimizedWasteValue;
+
+        // Ensure both are valid numbers before calculating
+        if (typeof projected === 'number' && typeof optimized === 'number') {
+          totalSaved += (projected - optimized);
+        }
+      }
+    }
+    return totalSaved;
+  }, [products]);
+  // -----------------------------------------------------------
+
   const recentAdded = useMemo(() => {
+    // ... (no changes in this function)
     const ts = (p: ApiProduct) => {
       const t = p.createdAt || p.updatedAt || '';
       const d = new Date(t);
@@ -126,6 +153,7 @@ const Dashboard: React.FC = () => {
   }, [products]);
 
   const categoryCounts = useMemo(() => {
+    // ... (no changes in this function)
     const map = new Map<string, number>();
     for (const p of products) {
       const key = (p.category || 'Uncategorized').trim();
@@ -135,8 +163,8 @@ const Dashboard: React.FC = () => {
   }, [products]);
   const categoryTotal = categoryCounts.reduce((s, x) => s + x.value, 0);
 
-  // Price alerts: items expiring in <= 3 days (includes today)
   const priceAlerts = useMemo(() => {
+    // ... (no changes in this function)
     const now = new Date();
     const alerts: Array<{
       id?: string;
@@ -191,13 +219,11 @@ const Dashboard: React.FC = () => {
       }
     }
 
-    // sort: days left ascending (0/1 high priority), then low stock first
     alerts.sort((a, b) => {
       if (a.daysLeft !== b.daysLeft) return a.daysLeft - b.daysLeft;
       return a.stock - b.stock;
     });
 
-    // return top 6 alerts to keep UI tidy
     return alerts.slice(0, 6);
   }, [products]);
 
@@ -220,16 +246,7 @@ const Dashboard: React.FC = () => {
             <option value="30d">Last 30 days</option>
             <option value="90d">Last 90 days</option>
           </select>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium shadow-lg shadow-blue-500/50 hover:shadow-xl hover:shadow-blue-500/60 transition-all"
-          >
-            <span className="flex items-center gap-2">
-              <Zap size={18} />
-              Run AI Optimization
-            </span>
-          </motion.button>
+    
         </div>
       </div>
 
@@ -238,6 +255,7 @@ const Dashboard: React.FC = () => {
       )}
 
       {/* Stats Grid */}
+      {/* --- MODIFICATION 3: Update StatCard value --- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Products"
@@ -247,50 +265,62 @@ const Dashboard: React.FC = () => {
           icon={Package}
           color="purple"
         />
-        <StatCard title="Total Revenue" value="$32,450" change="+18.2%" trend="up" icon={DollarSign} color="green" />
-        <StatCard title="Items Expiring Soon" value={priceAlerts.length || 0} change="-5 items" trend="up" icon={AlertTriangle} color="red" />
-        <StatCard title="Waste Reduction" value="70%" change="+12.5%" trend="up" icon={TrendingUp} color="blue" />
+        <StatCard 
+          title="Items Expiring Soon" 
+          value={loading ? '—' : priceAlerts.length} 
+          change="" // You can update this to show change
+          trend="up" 
+          icon={AlertTriangle} 
+          color="red" 
+        />
+        <StatCard 
+          title="Total Wastage Saved" 
+          value={loading ? '—' : `$${totalWasteSaved.toFixed(2)}`} 
+          change="+12.5%" // This is hardcoded, you can make it dynamic
+          trend="up" 
+          icon={TrendingUp} 
+          color="blue" 
+        />
+         {/* I've added a 4th card for Total Value, as it's a good metric to have */}
+         <StatCard 
+            title="Total Inventory Value"
+            value={loading ? '—' : `$${(products.reduce((sum, p) => sum + (p.pricing?.currentPrice ?? 0) * (p.stock?.quantity ?? 0), 0)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+            change=""
+            trend="up"
+            icon={DollarSign}
+            color="green"
+          />
       </div>
+      {/* ------------------------------------------- */}
+
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Chart */}
+        {/* Main Chart (Example, you can replace with real data) */}
         <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">Revenue & Profit Trends</h3>
-              <p className="text-sm text-gray-600">Track your performance over time</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg font-medium">Profit</button>
-              <button className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Revenue</button>
-            </div>
-          </div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Profit & Revenue</h3>
+          <p className="text-sm text-gray-600 mb-4">Performance over the last 7 days</p>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={chartData}>
               <defs>
-                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                 </linearGradient>
-                <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip contentStyle={{
-                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                border: '1px solid #e5e7eb',
-                borderRadius: '12px',
-                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
-              }}/>
-              <Area type="monotone" dataKey="profit" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorProfit)" />
-              <Area type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="date" style={{ fontSize: '12px' }} />
+              <YAxis style={{ fontSize: '12px' }} />
+              <Tooltip />
+              <Area type="monotone" dataKey="revenue" stroke="#3b82f6" fill="url(#colorRevenue)" />
+              <Area type="monotone" dataKey="profit" stroke="#22c55e" fill="url(#colorProfit)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
+
 
         {/* Inventory by Category */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
@@ -404,7 +434,7 @@ const Dashboard: React.FC = () => {
                   </div>
 
                   <Link
-                    to={`/product/${alert.id}`}
+                    to={`/product/${alert.id}`} // Make sure your router has a /product/:id route
                     className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"
                   >
                     Update

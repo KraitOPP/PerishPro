@@ -17,17 +17,17 @@ const Analytics: React.FC = () => {
   const [activeMetric, setActiveMetric] = useState('revenue');
   
   const revenueData = [
-    { date: 'Week 1', revenue: 12500, profit: 4200, cost: 8300, waste: 450 },
-    { date: 'Week 2', revenue: 15800, profit: 5600, cost: 10200, waste: 380 },
-    { date: 'Week 3', revenue: 18200, profit: 7100, cost: 11100, waste: 320 },
-    { date: 'Week 4', revenue: 21400, profit: 8900, cost: 12500, waste: 250 }
+    { date: 'Week 1', revenue: 0, profit: 0, cost: 0, waste: 0 },
+    { date: 'Week 2', revenue: 0, profit: 0, cost: 0, waste: 0 },
+    { date: 'Week 3', revenue: 0, profit: 0, cost: 0, waste: 0 },
+    { date: 'Week 4', revenue: 0, profit: 0, cost: 0, waste: 0 }
   ];
   
   const categoryPerformance = [
-    { category: 'Dairy', revenue: 15400, profit: 5200, waste: 8, items: 25 },
-    { category: 'Meat', revenue: 12800, profit: 4100, waste: 12, items: 18 },
-    { category: 'Produce', revenue: 9200, profit: 3400, waste: 15, items: 32 },
-    { category: 'Bakery', revenue: 7800, profit: 2800, waste: 5, items: 22 }
+    { category: 'Dairy', revenue: 0, profit: 0, waste: 0, items: 0 },
+    { category: 'Meat', revenue: 0, profit: 0, waste: 0, items: 0 },
+    { category: 'Produce', revenue: 0, profit: 0, waste: 0, items: 0 },
+    { category: 'Bakery', revenue: 0, profit: 0, waste: 0, items: 0 }
   ];
   
   const mlPerformanceData = [
@@ -39,11 +39,6 @@ const Analytics: React.FC = () => {
   ];
   
   const wasteReductionData = [
-    { month: 'Jan', withoutML: 850, withML: 680 },
-    { month: 'Feb', withoutML: 920, withML: 580 },
-    { month: 'Mar', withoutML: 780, withML: 420 },
-    { month: 'Apr', withoutML: 890, withML: 380 },
-    { month: 'May', withoutML: 810, withML: 320 }
   ];
   
   const topProducts = [
@@ -140,32 +135,32 @@ const Analytics: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
           title="Total Revenue" 
-          value="$67,900" 
-          change="+24.5%" 
+          value="$0" 
+          change="0%" 
           trend="up"
           icon={DollarSign} 
           color="from-green-500 to-green-600" 
         />
         <StatCard 
           title="Total Profit" 
-          value="$25,800" 
-          change="+18.2%" 
+          value="$0" 
+          change="0%" 
           trend="up"
           icon={TrendingUp} 
           color="from-blue-500 to-blue-600" 
         />
         <StatCard 
           title="Items Sold" 
-          value="1,247" 
-          change="+12.3%" 
+          value="0" 
+          change="0%" 
           trend="up"
           icon={ShoppingCart} 
           color="from-purple-500 to-purple-600" 
         />
         <StatCard 
           title="Waste Reduced" 
-          value="68%" 
-          change="+15.8%" 
+          value="0" 
+          change="0%" 
           trend="up"
           icon={Target} 
           color="from-orange-500 to-orange-600" 
@@ -252,7 +247,7 @@ const Analytics: React.FC = () => {
               <Zap className="text-blue-600" size={16} />
               <span className="text-sm font-semibold text-blue-900">Overall Score</span>
             </div>
-            <p className="text-2xl font-bold text-blue-600">86.2%</p>
+            <p className="text-2xl font-bold text-blue-600">94%</p>
           </div>
         </div>
       </div>
@@ -327,12 +322,12 @@ const Analytics: React.FC = () => {
           <div className="mt-4 grid grid-cols-2 gap-4">
             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
               <p className="text-xs text-red-600 mb-1">Avg. Without ML</p>
-              <p className="text-2xl font-bold text-red-600">$850</p>
+              <p className="text-2xl font-bold text-red-600">$0</p>
               <p className="text-xs text-gray-600 mt-1">waste per month</p>
             </div>
             <div className="p-3 bg-green-50 rounded-lg border border-green-200">
               <p className="text-xs text-green-600 mb-1">Avg. With ML</p>
-              <p className="text-2xl font-bold text-green-600">$476</p>
+              <p className="text-2xl font-bold text-green-600">$0</p>
               <p className="text-xs text-gray-600 mt-1">waste per month</p>
             </div>
           </div>
@@ -340,7 +335,7 @@ const Analytics: React.FC = () => {
       </div>
       
       {/* Top Performing Products */}
-      <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
+      {/* <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Top Performing Products</h3>
@@ -390,7 +385,7 @@ const Analytics: React.FC = () => {
             </motion.div>
           ))}
         </div>
-      </div>
+      </div> */}
       
       {/* Insights & Recommendations */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

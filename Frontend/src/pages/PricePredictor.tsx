@@ -271,7 +271,7 @@ const PricePredictor: React.FC = () => {
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="mt-6">
               <Button
                 variant="primary"
-                className="w-full"
+                className="w-full flex items-center justify-center gap-2"
                 onClick={runPrediction}
                 disabled={loading || !formData.mlProductId.trim()}
               >

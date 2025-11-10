@@ -6,7 +6,7 @@ import { LayoutDashboard, Package, PlusCircle, BarChart3, TrendingUp, Settings, 
 const Sidebar: React.FC = () => {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, badge: null },
-    { path: '/inventory', label: 'Inventory', icon: Package, badge: '12' },
+    { path: '/inventory', label: 'Inventory', icon: Package },
     { path: '/add-product', label: 'Add Product', icon: PlusCircle, badge: null },
     { path: '/analytics', label: 'Analytics', icon: BarChart3, badge: 'New' },
     { path: '/price-predictor', label: 'Price Predictor', icon: TrendingUp, badge: 'AI' },
@@ -21,7 +21,6 @@ const Sidebar: React.FC = () => {
           <Zap size={16} className="text-yellow-400" />
           <span className="text-sm font-semibold">AI Active</span>
         </div>
-        <p className="text-xs text-gray-300">Optimizing 89 products</p>
         <div className="mt-3 h-1.5 bg-gray-700 rounded-full overflow-hidden">
           <motion.div
             initial={{ width: 0 }}

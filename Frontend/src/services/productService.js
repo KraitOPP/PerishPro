@@ -34,7 +34,6 @@ export const listProducts = async (options = {}) => {
 export const getProduct = async (id) => {
   try {
     const response = await api.get(`/products/${id}`);
-    console.log(response);
     return response.data;
   } catch (error) {
     const message =
