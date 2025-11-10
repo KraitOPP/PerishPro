@@ -108,12 +108,14 @@ To run this project, you need to have **three separate terminals** open, one for
     **`Backend/.env`**
 
     ```env
-    PORT=5000
-    MONGODB_URI=your_mongodb_connection_string
-    JWT_SECRET=YOUR_SECRET_JWT_KEY
-    CLOUDINARY_CLOUD_NAME=your_cloudinary_name
-    CLOUDINARY_API_KEY=your_cloudinary_key
-    CLOUDINARY_API_SECRET=your_cloudinary_secret
+    PORT=
+    ML_API_URL=
+    MONGODB_URL=
+    JWT_KEY=
+    NODE_ENV=
+    CLOUDINARY_CLOUD_NAME=
+    CLOUDINARY_API_KEY=
+    CLOUDINARY_API_SECRET=
     ```
 
 4.  **Start the server:**
@@ -183,7 +185,6 @@ To run this project, you need to have **three separate terminals** open, one for
 
     ```env
     VITE_API_BASE_URL=http://localhost:5000/api
-    VITE_MODEL_API_URL=http://localhost:5001
     ```
 
 4.  **Start the development server:**
