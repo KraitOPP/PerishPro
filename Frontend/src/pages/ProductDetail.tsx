@@ -1,5 +1,5 @@
 // src/pages/ProductDetail.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
@@ -45,7 +45,21 @@ const safeNumber = (v: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const getStockQty = (s: any) => {
+  if (s == null) return 0;
+  if (typeof s === 'object') {
+    if (Number.isFinite(Number(s.quantity))) return Number(s.quantity);
+    if (Number.isFinite(Number(s.qty))) return Number(s.qty);
+    if (typeof s.quantity === 'string' && !Number.isNaN(Number(s.quantity))) return Number(s.quantity);
+    return 0;
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const FLASK_URL = 'http://localhost:8000/predict';
+// If you have a dedicated backend route you can use it instead of updateProduct
+// const BACKEND_APPLY_ML = (productId: string) => `http://localhost:5000/api/products/${productId}/apply-ml`;
 
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -64,9 +78,18 @@ const ProductDetail: React.FC = () => {
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
 
-  // Store last ML call result so we can show details in the modal
+  // ML display values
   const [lastMlOptimal, setLastMlOptimal] = useState<number | null>(null);
   const [lastMlConfidence, setLastMlConfidence] = useState<number | null>(null);
+
+  // Waste UI (optional)
+  const [expectedOptimalWaste, setExpectedOptimalWaste] = useState<number | null>(null);
+  const [expectedCurrentWaste, setExpectedCurrentWaste] = useState<number | null>(null);
+  const [wasteReductionPercent, setWasteReductionPercent] = useState<number | null>(null);
+  const [originalUnits, setOriginalUnits] = useState<number | null>(null);
+
+  // ensure we call ML predict only once per product load
+  const mlCalledRef = useRef<Record<string, boolean>>({});
 
   const daysLeft = useMemo(() => {
     if (!product?.expiryDate) return 999;
@@ -76,7 +99,6 @@ const ProductDetail: React.FC = () => {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }, [product?.expiryDate]);
 
-  // Temporary fallback only if we have nothing from ML yet
   const computeTemporaryML = (p: ApiProduct | null) => {
     if (!p) return 0;
     if (typeof p.optimalPrice === 'number' && p.optimalPrice > 0) return p.optimalPrice;
@@ -92,6 +114,57 @@ const ProductDetail: React.FC = () => {
     else return Number((currentPrice * 0.97).toFixed(2));
   };
 
+  // normalize product shape from backend
+  const normalizeProduct = (p: any) => {
+    if (!p) return null;
+    const normalized: any = {
+      ...p,
+      id: p._id ?? p.id,
+      name: p.name ?? p.sku ?? 'Unnamed',
+      category: p.category ?? 'Uncategorized',
+      sku: p.sku ?? '',
+      expiryDate: p.perishable?.expiryDate
+        ? formatISODateToYYYYMMDD(p.perishable.expiryDate)
+        : p.expiryDate
+        ? formatISODateToYYYYMMDD(p.expiryDate)
+        : '',
+      mfgDate: p.perishable?.manufactureDate
+        ? formatISODateToYYYYMMDD(p.perishable.manufactureDate)
+        : p.mfgDate
+        ? formatISODateToYYYYMMDD(p.mfgDate)
+        : '',
+      currentPrice: safeNumber(p.pricing?.currentPrice ?? p.pricing?.mrp ?? p.currentPrice, 0),
+      mlPrice: ((): number | null => {
+        const v = p.aiMetrics?.recommendedPrice ?? p.mlPrice;
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })(),
+      optimalPrice: ((): number | null => {
+        const v = p.aiMetrics?.optimalPrice ?? p.optimalPrice;
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })(),
+      aiMlProductId: p.aiMetrics?.mlProductId ?? p.aiMlProductId ?? p.ml_id ?? '',
+      originalPrice: safeNumber(
+        p.pricing?.mrp ?? p.originalPrice ?? p.pricing?.costPrice ?? 0,
+        0
+      ),
+      stock: getStockQty(p.stock?.quantity ?? p.stock ?? p.stockLevel ?? 0),
+      status: p.status ?? 'active',
+      confidence: safeNumber(p.aiMetrics?.confidenceScore ?? p.confidence ?? 85, 0),
+      description: p.description ?? p.notes ?? '',
+      weight: p.weight ?? null,
+      supplier: p.supplier ?? null,
+      expectedOptimalWaste: p.aiMetrics?.expectedWaste ?? p.expectedOptimalWaste ?? p.expected_optimal_waste ?? null,
+      expectedCurrentWaste: p.aiMetrics?.currentExpectedWaste ?? p.currentExpectedWaste ?? p.expected_current_waste ?? null,
+      wasteReductionPercent: p.aiMetrics?.percentWasteReduction ?? p.wasteReductionPercent ?? p.percentWasteReduction ?? null,
+      originalStock: Number.isFinite(Number(p.originalStock)) ? Number(p.originalStock) : undefined
+    };
+
+    return normalized;
+  };
+
+  // fetch product from backend (authoritative). called on mount and after persisting.
   useEffect(() => {
     let mounted = true;
     const fetchProduct = async () => {
@@ -107,75 +180,35 @@ const ProductDetail: React.FC = () => {
           setProduct(null);
           return;
         }
-
-        const normalized: any = {
-          ...p,
-          id: p._id ?? p.id,
-          name: p.name ?? p.sku ?? 'Unnamed',
-          category: p.category ?? 'Uncategorized',
-          sku: p.sku ?? '',
-          expiryDate: p.perishable?.expiryDate
-            ? formatISODateToYYYYMMDD(p.perishable.expiryDate)
-            : p.expiryDate
-            ? formatISODateToYYYYMMDD(p.expiryDate)
-            : '',
-          mfgDate: p.perishable?.manufactureDate
-            ? formatISODateToYYYYMMDD(p.perishable.manufactureDate)
-            : p.mfgDate
-            ? formatISODateToYYYYMMDD(p.mfgDate)
-            : '',
-          currentPrice: safeNumber(p.pricing?.currentPrice ?? p.pricing?.mrp ?? p.currentPrice, 0),
-          mlPrice: ((): number | null => {
-            const v = p.aiMetrics?.recommendedPrice ?? p.mlPrice;
-            const n = Number(v);
-            return Number.isFinite(n) && n > 0 ? n : null;
-          })(),
-          optimalPrice: ((): number | null => {
-            const v = p.aiMetrics?.optimalPrice ?? p.optimalPrice;
-            const n = Number(v);
-            return Number.isFinite(n) && n > 0 ? n : null;
-          })(),
-          aiMlProductId: p.aiMetrics?.mlProductId ?? p.aiMlProductId ?? p.ml_id ?? '', // try to pick ML id if present
-          originalPrice: safeNumber(
-            p.pricing?.mrp ?? p.originalPrice ?? p.pricing?.costPrice ?? 0,
-            0
-          ),
-          stock: safeNumber(p.stock?.quantity ?? p.stock ?? 0, 0),
-          status: p.status ?? 'active',
-          confidence: safeNumber(p.aiMetrics?.confidenceScore ?? p.confidence ?? 85, 0),
-          description: p.description ?? p.notes ?? '',
-          weight: p.weight ?? null,
-          supplier: p.supplier ?? null
-        };
-
+        const normalized = normalizeProduct(p);
         setProduct(normalized);
 
-        // histories
-        if (Array.isArray(p.priceHistory) && p.priceHistory.length > 0) {
-          setPriceHistory(p.priceHistory);
-        } else {
-          setPriceHistory([
-            { date: '11-01', price: normalized.originalPrice },
-            { date: '11-03', price: Math.round(normalized.originalPrice * 0.95 * 100) / 100 },
-            { date: '11-05', price: normalized.currentPrice },
-            { date: '11-07', price: Math.round(normalized.currentPrice * 0.88 * 100) / 100 },
-            { date: normalized.expiryDate || 'exp', price: normalized.mlPrice ?? normalized.currentPrice }
-          ]);
-        }
+        // set waste UI if present
+        setExpectedOptimalWaste(Number.isFinite(Number(normalized.expectedOptimalWaste)) ? Number(normalized.expectedOptimalWaste) : null);
+        setExpectedCurrentWaste(Number.isFinite(Number(normalized.expectedCurrentWaste)) ? Number(normalized.expectedCurrentWaste) : null);
+        setWasteReductionPercent(Number.isFinite(Number(normalized.wasteReductionPercent)) ? Number(normalized.wasteReductionPercent) : null);
+        setOriginalUnits(Number.isFinite(Number(normalized.originalStock)) ? Number(normalized.originalStock) : (Number.isFinite(Number(normalized.stock)) ? normalized.stock : null));
 
-        if (Array.isArray(p.salesHistory) && p.salesHistory.length > 0) {
-          setSalesHistory(p.salesHistory);
-        } else {
-          setSalesHistory([
-            { date: '11-01', sold: 8 },
-            { date: '11-02', sold: 12 },
-            { date: '11-03', sold: 15 },
-            { date: '11-04', sold: 10 },
-            { date: '11-05', sold: 18 },
-            { date: '11-06', sold: 22 },
-            { date: '11-07', sold: 25 }
-          ]);
-        }
+        // price & sales history fallback
+        if (Array.isArray(p.priceHistory) && p.priceHistory.length > 0) setPriceHistory(p.priceHistory);
+        else setPriceHistory([
+          { date: '11-01', price: normalized.originalPrice },
+          { date: '11-03', price: Math.round(normalized.originalPrice * 0.95 * 100) / 100 },
+          { date: '11-05', price: normalized.currentPrice },
+          { date: '11-07', price: Math.round(normalized.currentPrice * 0.88 * 100) / 100 },
+          { date: normalized.expiryDate || 'exp', price: normalized.mlPrice ?? normalized.currentPrice }
+        ]);
+
+        if (Array.isArray(p.salesHistory) && p.salesHistory.length > 0) setSalesHistory(p.salesHistory);
+        else setSalesHistory([
+          { date: '11-01', sold: 8 },
+          { date: '11-02', sold: 12 },
+          { date: '11-03', sold: 15 },
+          { date: '11-04', sold: 10 },
+          { date: '11-05', sold: 18 },
+          { date: '11-06', sold: 22 },
+          { date: '11-07', sold: 25 }
+        ]);
 
         setEditedPrice(normalized.currentPrice);
       } catch (err: any) {
@@ -188,20 +221,87 @@ const ProductDetail: React.FC = () => {
     };
 
     fetchProduct();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [id]);
+
+  // call ML predict automatically when user opens product detail (once per product id).
+  // This is only to show recommended price; we still persist when user clicks Apply.
+  useEffect(() => {
+    const callMlOnce = async () => {
+      if (!product?.id) return;
+      const pid = String(product.id);
+      if (mlCalledRef.current[pid]) return;
+      mlCalledRef.current[pid] = true;
+
+      const mlProductId = product.aiMlProductId || pid;
+      const payload = {
+        productId: mlProductId,
+        stockLevel: Number(product.stock ?? 0),
+        daysToExpiry: Math.max(0, daysLeft)
+      };
+
+      try {
+        const resp = await fetch(FLASK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '');
+          console.warn('ML /predict failed:', resp.status, text);
+          return;
+        }
+
+        const data = await resp.json();
+        const optimal = data?.recommendations?.optimalPrice;
+        const confidence = data?.recommendations?.confidenceScore;
+
+        if (typeof optimal === 'number' && !Number.isNaN(optimal)) {
+          setLastMlOptimal(Number(optimal));
+          setLastMlConfidence(typeof confidence === 'number' ? Number(confidence) : null);
+
+          setProduct(prev => prev ? {
+            ...prev,
+            optimalPrice: Number(optimal),
+            mlPrice: Number(optimal),
+            aiMetrics: {
+              ...(prev.aiMetrics ?? {}),
+              recommendedPrice: Number(optimal),
+              optimalPrice: Number(optimal),
+              confidenceScore: typeof confidence === 'number' ? Number(confidence) : prev.aiMetrics?.confidenceScore
+            }
+          } : prev);
+
+          const optWaste = Number(data?.scenarios?.optimal?.expectedWaste ?? data?.scenarios?.optimal?.expected_waste ?? NaN);
+          const curWaste = Number(data?.scenarios?.current?.expectedWaste ?? data?.scenarios?.current?.expected_waste ?? NaN);
+          const impactPercent = Number.isFinite(Number(data?.impact?.wasteReduction)) ? Number(data?.impact?.wasteReduction) : null;
+
+          setExpectedOptimalWaste(Number.isFinite(optWaste) ? optWaste : null);
+          setExpectedCurrentWaste(Number.isFinite(curWaste) ? curWaste : null);
+          setWasteReductionPercent(impactPercent !== null ? impactPercent : null);
+        } else {
+          console.warn('ML response missing optimalPrice', data);
+        }
+      } catch (err) {
+        console.error('ML predict call failed', err);
+      }
+    };
+
+    callMlOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product?.id]);
 
   const calculateOptimizationImpact = () => {
     if (!product) return { profitIncrease: '0.00', wasteSaving: '0.00', sellThroughIncrease: '0%', revenueIncrease: '0.0' };
     const curr = safeNumber(product.currentPrice, 0);
-    const ml = (typeof product.optimalPrice === 'number' ? product.optimalPrice : (product.mlPrice ?? computeTemporaryML(product)));
+    const stock = getStockQty(product.stock);
+    const ml = (typeof lastMlOptimal === 'number' ? lastMlOptimal : (typeof product.optimalPrice === 'number' ? product.optimalPrice : (product.mlPrice ?? computeTemporaryML(product))));
     const expectedSalesIncrease = 0.35;
-    const currentRevenue = curr * (product.stock ?? 0) * 0.6;
-    const optimizedRevenue = ml * (product.stock ?? 0) * 0.95;
+    const currentRevenue = curr * stock * 0.6;
+    const optimizedRevenue = ml * stock * 0.95;
     const profitIncrease = optimizedRevenue - currentRevenue;
-    const wasteSaving = (product.stock ?? 0) * 0.35 * ml;
+    const wasteSaving = stock * 0.35 * ml;
     const revenueIncrease = currentRevenue > 0 ? ((optimizedRevenue / currentRevenue - 1) * 100) : 0;
     return {
       profitIncrease: profitIncrease.toFixed(2),
@@ -213,75 +313,98 @@ const ProductDetail: React.FC = () => {
 
   const impact = calculateOptimizationImpact();
 
-  // ---- Optimize: call localhost:8000/predict with { productId, stockLevel, daysToExpiry } ----
+  // Apply ML optimization AND persist to backend. UI is updated from backend response (authoritative).
   const handleOptimize = async () => {
     if (!product || !product.id) return;
 
-    // pick productId for ML: prefer mlProductId, else fallback to product.id as string
-    const mlProductId = product.aiMlProductId || String(product.id);
-    const payload = {
-      productId: mlProductId,
-      stockLevel: Number(product.stock ?? 0),
-      daysToExpiry: Math.max(0, daysLeft)
-    };
-
     setLoadingAction(true);
     setErrorMessage('');
+
     try {
-      const resp = await fetch(FLASK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      // Step 1: ensure we have an ML recommendation (prefer lastMlOptimal)
+      let mlToApply = typeof lastMlOptimal === 'number' ? lastMlOptimal : (typeof product.optimalPrice === 'number' ? product.optimalPrice : null);
+      let mlResponse: any = null;
 
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(text || `ML /predict failed with status ${resp.status}`);
+      if (mlToApply == null) {
+        // call ML
+        const mlProductId = product.aiMlProductId || String(product.id);
+        const payload = {
+          productId: mlProductId,
+          stockLevel: Number(getStockQty(product.stock) ?? 0),
+          daysToExpiry: Math.max(0, daysLeft)
+        };
+
+        const resp = await fetch(FLASK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '');
+          throw new Error(text || `ML /predict failed with status ${resp.status}`);
+        }
+
+        mlResponse = await resp.json();
+        const optimal = mlResponse?.recommendations?.optimalPrice;
+        const confidence = mlResponse?.recommendations?.confidenceScore;
+        if (typeof optimal !== 'number' || Number.isNaN(optimal)) {
+          throw new Error('Invalid ML response: recommendations.optimalPrice missing');
+        }
+        mlToApply = Number(optimal);
+        setLastMlOptimal(mlToApply);
+        setLastMlConfidence(typeof confidence === 'number' ? Number(confidence) : null);
       }
 
-      const data = await resp.json();
-      const optimal = data?.recommendations?.optimalPrice;
-      const confidence = data?.recommendations?.confidenceScore;
+      // Optional: optimistic UI update while persisting
+      const prevProduct = product;
+      setProduct(prev => prev ? { ...prev, currentPrice: Number(mlToApply) } : prev);
+      setEditedPrice(Number(mlToApply));
+      setSuccessMessage('Applying ML price...');
 
-      if (typeof optimal !== 'number' || Number.isNaN(optimal)) {
-        throw new Error('Invalid ML response: recommendations.optimalPrice missing');
-      }
-
-      // Persist to backend product
+      // Step 2: persist to backend via productService.updateProduct (preferred)
+      // We're saving pricing.currentPrice and aiMetrics so backend remembers this.
       await productService.updateProduct(String(product.id), {
         pricing: {
-          currentPrice: Number(optimal),
+          currentPrice: Number(mlToApply),
           costPrice: product.originalPrice,
           mrp: product.originalPrice
         },
         aiMetrics: {
-          mlProductId: mlProductId,
-          optimalPrice: Number(optimal),
-          recommendedPrice: Number(optimal),
-          confidenceScore: typeof confidence === 'number' ? confidence : product.confidence
+          mlProductId: product.aiMlProductId ?? String(product.id),
+          optimalPrice: Number(mlToApply),
+          recommendedPrice: Number(mlToApply),
+          confidenceScore: lastMlConfidence ?? product.confidence
         }
       });
 
-      // Update local UI
-      setProduct(prev => prev ? {
-        ...prev,
-        currentPrice: Number(optimal),
-        optimalPrice: Number(optimal),
-        mlPrice: Number(optimal),
-        confidence: typeof confidence === 'number' ? confidence : prev.confidence
-      } : prev);
+      // Step 3: re-fetch authoritative product from backend (ensures persisted state shown)
+      const fresh = await productService.getProduct(String(product.id));
+      const p = fresh?.product ?? fresh;
+      if (p) {
+        const normalized = normalizeProduct(p);
+        setProduct(normalized);
 
-      setEditedPrice(Number(optimal));
-      setLastMlOptimal(Number(optimal));
-      setLastMlConfidence(typeof confidence === 'number' ? confidence : null);
+        setLastMlOptimal(Number(normalized.optimalPrice ?? normalized.mlPrice ?? mlToApply));
+        setLastMlConfidence(Number(normalized.confidence ?? lastMlConfidence ?? 0));
 
-      setSuccessMessage('Price optimized successfully');
+        setExpectedOptimalWaste(Number.isFinite(Number(normalized.expectedOptimalWaste)) ? Number(normalized.expectedOptimalWaste) : expectedOptimalWaste);
+        setExpectedCurrentWaste(Number.isFinite(Number(normalized.expectedCurrentWaste)) ? Number(normalized.expectedCurrentWaste) : expectedCurrentWaste);
+        setWasteReductionPercent(Number.isFinite(Number(normalized.wasteReductionPercent)) ? Number(normalized.wasteReductionPercent) : wasteReductionPercent);
+        setOriginalUnits(Number.isFinite(Number(normalized.originalStock)) ? Number(normalized.originalStock) : originalUnits);
+      } else {
+        // If backend didn't return product, just keep optimistic value
+        setProduct(prev => prev ? { ...prev, currentPrice: Number(mlToApply), optimalPrice: Number(mlToApply), mlPrice: Number(mlToApply) } : prev);
+        setLastMlOptimal(Number(mlToApply));
+      }
+
+      setSuccessMessage('ML price persisted');
       setTimeout(() => setSuccessMessage(''), 3000);
       setShowOptimizeModal(false);
     } catch (err: any) {
-      console.error('Optimize failed', err);
-      const errorMsg = typeof err === 'string' ? err : (err?.message ?? 'Failed to apply optimization');
-      setErrorMessage(errorMsg);
+      console.error('Persist ML optimization failed', err);
+      const msg = typeof err === 'string' ? err : (err?.message ?? 'Failed to persist ML price');
+      setErrorMessage(msg);
       setTimeout(() => setErrorMessage(''), 5000);
     } finally {
       setLoadingAction(false);
@@ -368,9 +491,17 @@ const ProductDetail: React.FC = () => {
     );
   }
 
-  const mlRecommended = typeof product.optimalPrice === 'number'
-    ? product.optimalPrice
-    : (product.mlPrice ?? computeTemporaryML(product));
+  const mlRecommended = typeof lastMlOptimal === 'number'
+    ? lastMlOptimal
+    : (typeof product.optimalPrice === 'number' ? product.optimalPrice : (product.mlPrice ?? computeTemporaryML(product)));
+
+  const displayedOptimalExpectedWaste = expectedOptimalWaste;
+  const displayedCurrentExpectedWaste = expectedCurrentWaste;
+  const displayedPercentReduction = (wasteReductionPercent != null)
+    ? wasteReductionPercent
+    : (displayedCurrentExpectedWaste != null && displayedOptimalExpectedWaste != null && originalUnits
+      ? ((displayedCurrentExpectedWaste - displayedOptimalExpectedWaste) / originalUnits) * 100
+      : null);
 
   return (
     <div className="space-y-6">
@@ -510,7 +641,7 @@ const ProductDetail: React.FC = () => {
                   <Sparkles size={14} /> ML Recommended
                 </p>
                 <p className="text-2xl font-bold text-green-600">
-                  ${mlRecommended.toFixed(2)}
+                  ${Number(mlRecommended ?? 0).toFixed(2)}
                 </p>
                 <p className="text-xs text-green-700 mt-1">
                   {(lastMlConfidence ?? product.confidence) ?? 0}% confidence
@@ -518,7 +649,7 @@ const ProductDetail: React.FC = () => {
               </div>
             </div>
 
-            {Math.abs(product.currentPrice - mlRecommended) > 0.01 && (
+            {Math.abs((product.currentPrice ?? 0) - (mlRecommended ?? 0)) > 0.01 && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
@@ -546,6 +677,7 @@ const ProductDetail: React.FC = () => {
                     <p className="text-xl font-bold text-orange-600">+{impact.revenueIncrease}%</p>
                   </div>
                 </div>
+
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -657,13 +789,38 @@ const ProductDetail: React.FC = () => {
             <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, ((product.stock ?? 0) / 160) * 100)}%` }}
+                animate={{ width: `${Math.min(100, ((product.stock ?? 0) / (originalUnits ?? 160)) * 100)}%` }}
                 className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
               />
             </div>
             <p className="text-xs text-gray-500 mt-2 text-center">
-              {product.stock} / 160 units (original stock)
+              {product.stock} / {(originalUnits ?? 160)} units (original stock)
             </p>
+
+            <div className="mt-4 space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>Original units used for %</span>
+                <span className="font-semibold text-gray-900">{originalUnits ?? '—'}</span>
+              </div>
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>Expected waste (optimal)</span>
+                <span className="font-semibold text-gray-900">
+                  {displayedOptimalExpectedWaste != null ? Number(displayedOptimalExpectedWaste).toFixed(2) : '—'} units
+                </span>
+              </div>
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>Waste % (optimal)</span>
+                <span className="font-semibold text-gray-900">
+                  {originalUnits != null && displayedOptimalExpectedWaste != null ? `${((displayedOptimalExpectedWaste / originalUnits) * 100).toFixed(1)}%` : '—'}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>Waste % reduction</span>
+                <span className="font-semibold text-gray-900">
+                  {displayedPercentReduction != null ? `${displayedPercentReduction.toFixed(1)}%` : '—'}
+                </span>
+              </div>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
@@ -727,17 +884,13 @@ const ProductDetail: React.FC = () => {
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">New Price:</span>
                 <span className="font-bold text-green-600">
-                  ${(
-                    (lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product))
-                  ).toFixed(2)}
+                  ${Number(lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product)).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">Price Change:</span>
                 <span className="font-bold text-red-600">
-                  -${(
-                    (product.currentPrice ?? 0) - (lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product))
-                  ).toFixed(2)}
+                  -${((product.currentPrice ?? 0) - (lastMlOptimal ?? product.optimalPrice ?? product.mlPrice ?? computeTemporaryML(product))).toFixed(2)}
                 </span>
               </div>
             </div>
